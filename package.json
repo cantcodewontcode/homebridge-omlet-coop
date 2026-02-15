@@ -1,0 +1,32 @@
+{
+  "name": "homebridge-omlet",
+  "version": "0.7.0",
+  "description": "Homebridge plugin for Omlet smart chicken coop autodoor - control your coop door and light through Apple HomeKit",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "homebridge-plugin",
+    "omlet",
+    "chicken coop",
+    "autodoor",
+    "smart coop",
+    "homekit"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cantcodewontcode/homebridge-omlet.git"
+  },
+  "bugs": {
+    "url": "https://github.com/cantcodewontcode/homebridge-omlet/issues"
+  },
+  "homepage": "https://github.com/cantcodewontcode/homebridge-omlet#readme",
+  "engines": {
+    "node": ">=18.0.0",
+    "homebridge": ">=1.6.0"
+  },
+  "author": "Bill Spry",
+  "license": "Apache-2.0",
+  "private": false
+}

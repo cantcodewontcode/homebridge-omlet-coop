@@ -1,0 +1,50 @@
+{
+  "pluginAlias": "OmletCoop",
+  "pluginType": "platform",
+  "singular": true,
+  "schema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "title": "Name",
+        "type": "string",
+        "required": true,
+        "default": "Omlet Coop"
+      },
+      "bearerToken": {
+        "title": "Bearer Token",
+        "type": "string",
+        "required": true,
+        "description": "API bearer token from Omlet (see README for instructions on obtaining this)"
+      },
+      "deviceId": {
+        "title": "Device ID",
+        "type": "string",
+        "required": true,
+        "description": "Your Omlet device ID (see README for instructions)"
+      },
+      "apiServer": {
+        "title": "API Server (Advanced)",
+        "type": "string",
+        "required": false,
+        "default": "x107.omlet.co.uk",
+        "description": "Omlet API server hostname (usually no need to change)"
+      },
+      "pollInterval": {
+        "title": "Poll Interval (seconds)",
+        "type": "integer",
+        "required": false,
+        "default": 30,
+        "minimum": 10,
+        "description": "How often to check device status"
+      },
+      "debug": {
+        "title": "Debug Mode",
+        "type": "boolean",
+        "required": false,
+        "default": false,
+        "description": "Enable detailed logging for troubleshooting"
+      }
+    }
+  }
+}
