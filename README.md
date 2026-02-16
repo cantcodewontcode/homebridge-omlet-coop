@@ -1,6 +1,6 @@
-# homebridge-omlet
+# homebridge-omlet-coop
 
-Control your Omlet smart chicken coop through Apple HomeKit.
+Control your Omlet Smart Automatic Chicken Coop Door through Apple HomeKit.
 
 This Homebridge plugin allows you to control your Omlet Autodoor and coop light directly from the Apple Home app, Siri, and HomeKit automations.
 
@@ -13,7 +13,8 @@ This Homebridge plugin allows you to control your Omlet Autodoor and coop light 
 
 ## Requirements
 
-- Omlet Autodoor with internet connectivity
+- Omlet Smart Automatic Chicken Coop Door
+- Omlet Wi-Fi Module (required for internet connectivity)
 - Homebridge v1.6.0 or later
 - Node.js v18.0.0 or later
 
@@ -21,32 +22,25 @@ This Homebridge plugin allows you to control your Omlet Autodoor and coop light 
 
 ### Via Homebridge UI (Recommended)
 
-1. Search for "homebridge-omlet" in the Homebridge UI plugin search
+1. Search for "homebridge-omlet-coop" in the Homebridge UI plugin search
 2. Click **Install**
 3. Configure the plugin (see Configuration section below)
 
 ### Via Command Line
 
 ```bash
-npm install -g homebridge-omlet
+npm install -g homebridge-omlet-coop
 ```
 
 ## Configuration
 
 ### Getting Your Bearer Token and Device ID
 
-**Note:** Currently, obtaining these values requires technical knowledge. Future versions will include an easier setup process.
+**Note:** Obtaining these values requires using the command line. A simplified setup process is planned for future releases.
 
-#### Option 1: Using Browser Developer Tools
+#### Using API Login (Recommended)
 
-1. Log in to the Omlet app web interface (if available)
-2. Open your browser's Developer Tools (F12)
-3. Go to the Network tab
-4. Look for API requests to `x107.omlet.co.uk`
-5. Find the `Authorization: Bearer` header - this is your token
-6. Find your device ID in the API responses
-
-#### Option 2: Using API Login (Advanced)
+**Step 1: Get your bearer token**
 
 ```bash
 curl -X POST https://x107.omlet.co.uk/api/v1/login \
@@ -54,16 +48,19 @@ curl -X POST https://x107.omlet.co.uk/api/v1/login \
   -d '{"emailAddress":"your@email.com","password":"yourpassword","cc":"US"}'
 ```
 
-The response will contain your `apiKey` (bearer token).
+The response will contain your `apiKey` - this is your bearer token:
+```json
+{"apiKey":"your_token_here"}
+```
 
-Then get your device ID:
+**Step 2: Get your device ID**
 
 ```bash
 curl -s https://x107.omlet.co.uk/api/v1/group \
   -H "Authorization: Bearer YOUR_TOKEN_HERE"
 ```
 
-Look for your device in the response.
+Look for your device in the response. The `deviceId` field is what you need.
 
 ### Config.json Example
 
@@ -119,7 +116,7 @@ You can:
 
 ### Accessories not responding
 
-- Verify your Omlet device has internet connectivity
+- Verify your Omlet device has internet connectivity via the Wi-Fi module
 - Check if your token has expired (tokens expire after ~15 days)
 - Try restarting Homebridge
 
@@ -150,7 +147,7 @@ You can:
 
 ## Support
 
-For issues, questions, or feature requests, please [open an issue on GitHub](https://github.com/cantcodewontcode/homebridge-omlet/issues).
+For issues, questions, or feature requests, please [open an issue on GitHub](https://github.com/cantcodewontcode/homebridge-omlet-coop/issues).
 
 ## Contributing
 
