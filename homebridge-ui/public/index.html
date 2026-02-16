@@ -7,11 +7,29 @@
   }
   .form-group {
     margin-bottom: 15px;
+    position: relative;
   }
   .form-group label {
     display: block;
     margin-bottom: 5px;
     font-weight: 500;
+  }
+  .password-wrapper {
+    position: relative;
+  }
+  .password-toggle {
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 5px;
+    color: #6c757d;
+  }
+  .password-toggle:hover {
+    color: #495057;
   }
   .form-control {
     width: 100%;
@@ -38,6 +56,19 @@
   .btn-primary:disabled {
     background: #6c757d;
     cursor: not-allowed;
+  }
+  .btn-link {
+    background: none;
+    border: none;
+    color: #007bff;
+    cursor: pointer;
+    font-size: 14px;
+    padding: 0;
+    text-decoration: none;
+    font-weight: 500;
+  }
+  .btn-link:hover {
+    text-decoration: underline;
   }
   .device-list {
     margin-top: 20px;
@@ -80,6 +111,11 @@
   .hidden {
     display: none;
   }
+  small {
+    display: block;
+    margin-top: 2px;
+    line-height: 1.3;
+  }
 </style>
 
 <div class="card">
@@ -91,12 +127,20 @@
   <div id="loginForm">
     <div class="form-group">
       <label for="email">Email Address</label>
-      <input type="email" class="form-control" id="email" placeholder="your@email.com" required>
+      <input type="email" class="form-control" id="email" placeholder="your@email.com">
     </div>
     
     <div class="form-group">
       <label for="password">Password</label>
-      <input type="password" class="form-control" id="password" placeholder="Your Omlet password" required>
+      <div class="password-wrapper">
+        <input type="password" class="form-control" id="password" placeholder="">
+        <button type="button" class="password-toggle" onclick="togglePasswordVisibility()">
+          <svg id="eyeIcon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+            <circle cx="12" cy="12" r="3"></circle>
+          </svg>
+        </button>
+      </div>
     </div>
     
     <div class="form-group">
@@ -115,7 +159,54 @@
       </select>
     </div>
     
-    <button id="loginButton" class="btn btn-primary">Login & Discover Devices</button>
+    <div class="form-group">
+      <label>
+        <input type="checkbox" id="enableLight" checked> Enable Coop Light Accessory
+      </label>
+      <small style="color: #6c757d;">Uncheck if you do not have the Omlet coop light module</small>
+    </div>
+    
+    <!-- Advanced Settings Section -->
+    <div style="margin-top: 25px; margin-bottom: 15px;">
+      <button type="button" class="btn-link" onclick="toggleAdvanced()" style="background: none; border: none; color: #007bff; cursor: pointer; font-size: 14px; padding: 0; text-decoration: none;">
+        <span id="advancedToggle">▶</span> Advanced Settings
+      </button>
+    </div>
+    
+    <div id="advancedSection" class="hidden" style="padding: 15px; background: #f8f9fa; border-radius: 6px; margin-bottom: 15px;">
+      <div class="form-group">
+        <label for="apiServer">API Server</label>
+        <input type="text" class="form-control" id="apiServer" placeholder="x107.omlet.co.uk">
+        <small style="color: #6c757d;">Default: x107.omlet.co.uk</small>
+      </div>
+      
+      <div class="form-group">
+        <label for="manualToken">API Token</label>
+        <input type="text" class="form-control" id="manualToken" placeholder="optional, will be auto-discovered">
+        <small style="color: #6c757d;">Provide API token instead of email address and password, if desired.</small>
+      </div>
+      
+      <div class="form-group">
+        <label for="manualDeviceId">Device ID</label>
+        <input type="text" class="form-control" id="manualDeviceId" placeholder="optional, will be auto-discovered">
+        <small style="color: #6c757d;">Provide Device ID to skip coop door auto-discovery, or to specify a coop door if you have multiple doors.</small>
+      </div>
+      
+      <div class="form-group">
+        <label for="pollInterval">Poll Interval (seconds)</label>
+        <input type="number" class="form-control" id="pollInterval" placeholder="30" min="30">
+        <small style="color: #6c757d;">How often to check device status (minimum 30 seconds)</small>
+      </div>
+      
+      <div class="form-group">
+        <label>
+          <input type="checkbox" id="debugMode"> Enable Debug Mode
+        </label>
+        <small style="color: #6c757d;">Enable detailed logging for troubleshooting</small>
+      </div>
+    </div>
+    
+    <button id="loginButton" class="btn btn-primary">Login</button>
   </div>
   
   <div id="devicesSection" class="hidden">
@@ -125,6 +216,42 @@
 </div>
 
 <script>
+// Toggle advanced settings
+function toggleAdvanced() {
+  const section = document.getElementById('advancedSection');
+  const toggle = document.getElementById('advancedToggle');
+  
+  if (section.classList.contains('hidden')) {
+    section.classList.remove('hidden');
+    toggle.textContent = '▼';
+  } else {
+    section.classList.add('hidden');
+    toggle.textContent = '▶';
+  }
+}
+
+// Toggle password visibility
+function togglePasswordVisibility() {
+  const passwordInput = document.getElementById('password');
+  const eyeIcon = document.getElementById('eyeIcon');
+  
+  if (passwordInput.type === 'password') {
+    passwordInput.type = 'text';
+    // Eye with slash (hidden)
+    eyeIcon.innerHTML = `
+      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+      <line x1="1" y1="1" x2="23" y2="23"></line>
+    `;
+  } else {
+    passwordInput.type = 'password';
+    // Eye without slash (visible)
+    eyeIcon.innerHTML = `
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+      <circle cx="12" cy="12" r="3"></circle>
+    `;
+  }
+}
+
 (async () => {
   let currentConfig = null;
   let discoveredToken = null;
@@ -150,6 +277,26 @@
     document.getElementById('countryCode').value = currentConfig.countryCode;
   }
   
+  // Pre-fill advanced settings
+  if (currentConfig.apiServer) {
+    document.getElementById('apiServer').value = currentConfig.apiServer;
+  }
+  if (currentConfig.bearerToken) {
+    document.getElementById('manualToken').value = currentConfig.bearerToken;
+  }
+  if (currentConfig.deviceId) {
+    document.getElementById('manualDeviceId').value = currentConfig.deviceId;
+  }
+  if (currentConfig.pollInterval) {
+    document.getElementById('pollInterval').value = currentConfig.pollInterval;
+  }
+  if (currentConfig.debug) {
+    document.getElementById('debugMode').checked = currentConfig.debug;
+  }
+  if (currentConfig.enableLight !== undefined) {
+    document.getElementById('enableLight').checked = currentConfig.enableLight;
+  }
+  
   // Show status message
   function showStatus(message, type) {
     const statusDiv = document.getElementById('statusMessage');
@@ -163,79 +310,258 @@
     document.getElementById('statusMessage').classList.add('hidden');
   }
   
-  // Handle login and discovery
+  // Handle login and discovery with smart credential validation
   document.getElementById('loginButton').addEventListener('click', async () => {
     const email = document.getElementById('email').value.trim();
     const password = document.getElementById('password').value;
     const countryCode = document.getElementById('countryCode').value;
-    
-    if (!email || !password) {
-      showStatus('Please enter email and password', 'error');
-      return;
-    }
+    const manualToken = document.getElementById('manualToken').value.trim();
+    const manualDeviceId = document.getElementById('manualDeviceId').value.trim();
+    const apiServer = document.getElementById('apiServer').value.trim() || 'x107.omlet.co.uk';
+    const pollInterval = parseInt(document.getElementById('pollInterval').value) || 30;
+    const debugMode = document.getElementById('debugMode').checked;
+    const enableLight = document.getElementById('enableLight').checked;
     
     const loginButton = document.getElementById('loginButton');
     loginButton.disabled = true;
-    loginButton.textContent = 'Logging in...';
     hideStatus();
     
     try {
-      // Step 1: Login to get token
-      showStatus('Logging in to Omlet...', 'info');
-      const loginResult = await homebridge.request('/login', {
-        email: email,
-        password: password,
-        countryCode: countryCode
-      });
+      // Determine what we have
+      const hasToken = !!manualToken;
+      const hasEmail = !!email;
+      const hasPassword = !!password;
+      const hasFullCreds = hasEmail && hasPassword;
+      const hasPartialCreds = (hasEmail || hasPassword) && !hasFullCreds;
+      const hasDeviceId = !!manualDeviceId;
       
-      if (!loginResult.success || !loginResult.token) {
-        throw new Error('Login failed - no token received');
+      // === FLOW A: Invalid Inputs ===
+      if (!hasToken && !hasFullCreds) {
+        throw new Error('Email address and password is required');
       }
       
-      discoveredToken = loginResult.token;
+      let finalToken = null;
+      let finalDeviceId = null;
+      let shouldSaveCredentials = false;
       
-      // Step 2: Discover devices
-      showStatus('Discovering devices...', 'info');
-      const discoverResult = await homebridge.request('/discover', {
-        token: discoveredToken
-      });
-      
-      if (!discoverResult.success || !discoverResult.devices) {
-        throw new Error('Discovery failed - no devices found');
+      // === FLOW D: Token + Full Credentials (Token priority with fallback) ===
+      if (hasToken && hasFullCreds) {
+        shouldSaveCredentials = true;
+        
+        showStatus('Validating token...', 'info');
+        loginButton.textContent = 'Validating...';
+        
+        const validateResult = await homebridge.request('/validate', {
+          token: manualToken,
+          deviceId: hasDeviceId ? manualDeviceId : null,
+          debug: debugMode
+        });
+        
+        if (validateResult.tokenValid) {
+          // Token is valid, use it
+          finalToken = manualToken;
+          
+          if (hasDeviceId) {
+            if (validateResult.deviceValid) {
+              finalDeviceId = manualDeviceId;
+              showStatus('Token and Device ID validated successfully!', 'success');
+            } else {
+              // Device invalid, auto-discover
+              if (validateResult.devices.length > 0) {
+                discoveredDevices = validateResult.devices;
+                displayDevices(discoveredDevices);
+                finalDeviceId = discoveredDevices[0].deviceId;
+                showStatus(`Invalid device ID. Successfully replaced with discovered device: ${discoveredDevices[0].name}`, 'success');
+              } else {
+                throw new Error('No coop doors discovered. Please ensure your coop door is connected to your account and try again.');
+              }
+            }
+          } else {
+            // No device provided, discover
+            if (validateResult.devices.length > 0) {
+              discoveredDevices = validateResult.devices;
+              displayDevices(discoveredDevices);
+              finalDeviceId = discoveredDevices[0].deviceId;
+              showStatus(`Success! Found ${discoveredDevices.length} device(s): ${discoveredDevices[0].name}`, 'success');
+            } else {
+              throw new Error('No coop doors discovered. Please ensure your coop door is connected to your account and try again.');
+            }
+          }
+        } else {
+          // Token invalid, fall back to login
+          showStatus('Token invalid, retrying with email/password...', 'info');
+          loginButton.textContent = 'Logging in...';
+          
+          const loginResult = await homebridge.request('/login', {
+            email: email,
+            password: password,
+            countryCode: countryCode,
+            debug: debugMode
+          });
+          
+          if (!loginResult.success || !loginResult.token) {
+            throw new Error('Login has failed, please check email address and password and try again.');
+          }
+          
+          finalToken = loginResult.token;
+          
+          // Now validate/discover device
+          const validateResult2 = await homebridge.request('/validate', {
+            token: finalToken,
+            deviceId: hasDeviceId ? manualDeviceId : null,
+            debug: debugMode
+          });
+          
+          if (hasDeviceId) {
+            if (validateResult2.deviceValid) {
+              finalDeviceId = manualDeviceId;
+              showStatus('Login successful! Device ID validated.', 'success');
+            } else {
+              if (validateResult2.devices.length > 0) {
+                discoveredDevices = validateResult2.devices;
+                displayDevices(discoveredDevices);
+                finalDeviceId = discoveredDevices[0].deviceId;
+                showStatus(`Login successful! Invalid device ID replaced with: ${discoveredDevices[0].name}`, 'success');
+              } else {
+                throw new Error('No coop doors discovered. Please ensure your coop door is connected to your account and try again.');
+              }
+            }
+          } else {
+            if (validateResult2.devices.length > 0) {
+              discoveredDevices = validateResult2.devices;
+              displayDevices(discoveredDevices);
+              finalDeviceId = discoveredDevices[0].deviceId;
+              showStatus(`Login successful! Found device: ${discoveredDevices[0].name}`, 'success');
+            } else {
+              throw new Error('No coop doors discovered. Please ensure your coop door is connected to your account and try again.');
+            }
+          }
+        }
       }
       
-      discoveredDevices = discoverResult.devices;
+      // === FLOW B: Token Only (may have partial creds, ignore them) ===
+      else if (hasToken) {
+        // Don't save partial credentials
+        shouldSaveCredentials = false;
+        
+        showStatus('Validating token...', 'info');
+        loginButton.textContent = 'Validating...';
+        
+        const validateResult = await homebridge.request('/validate', {
+          token: manualToken,
+          deviceId: hasDeviceId ? manualDeviceId : null,
+          debug: debugMode
+        });
+        
+        if (!validateResult.tokenValid) {
+          throw new Error('Token is invalid, please try again or use email address and password.');
+        }
+        
+        finalToken = manualToken;
+        
+        if (hasDeviceId) {
+          if (validateResult.deviceValid) {
+            finalDeviceId = manualDeviceId;
+            showStatus('Token and Device ID validated successfully!', 'success');
+          } else {
+            // Device invalid, auto-discover
+            if (validateResult.devices.length > 0) {
+              discoveredDevices = validateResult.devices;
+              displayDevices(discoveredDevices);
+              finalDeviceId = discoveredDevices[0].deviceId;
+              showStatus(`Invalid device ID. Successfully replaced with discovered device: ${discoveredDevices[0].name}`, 'success');
+            } else {
+              throw new Error('No coop doors discovered. Please ensure your coop door is connected to your account and try again.');
+            }
+          }
+        } else {
+          // No device provided, discover
+          if (validateResult.devices.length > 0) {
+            discoveredDevices = validateResult.devices;
+            displayDevices(discoveredDevices);
+            finalDeviceId = discoveredDevices[0].deviceId;
+            showStatus(`Success! Found ${discoveredDevices.length} device(s): ${discoveredDevices[0].name}`, 'success');
+          } else {
+            throw new Error('No coop doors discovered. Please ensure your coop door is connected to your account and try again.');
+          }
+        }
+      }
       
-      // Display devices
-      displayDevices(discoveredDevices);
+      // === FLOW C: Email+Password Only ===
+      else if (hasFullCreds) {
+        shouldSaveCredentials = true;
+        
+        showStatus('Logging in to Omlet...', 'info');
+        loginButton.textContent = 'Logging in...';
+        
+        const loginResult = await homebridge.request('/login', {
+          email: email,
+          password: password,
+          countryCode: countryCode
+        });
+        
+        if (!loginResult.success || !loginResult.token) {
+          throw new Error('Login has failed, please check email address and password and try again.');
+        }
+        
+        finalToken = loginResult.token;
+        
+        // Now validate/discover device
+        const validateResult = await homebridge.request('/validate', {
+          token: finalToken,
+          deviceId: hasDeviceId ? manualDeviceId : null
+        });
+        
+        if (hasDeviceId) {
+          if (validateResult.deviceValid) {
+            finalDeviceId = manualDeviceId;
+            showStatus('Login successful! Device ID validated.', 'success');
+          } else {
+            if (validateResult.devices.length > 0) {
+              discoveredDevices = validateResult.devices;
+              displayDevices(discoveredDevices);
+              finalDeviceId = discoveredDevices[0].deviceId;
+              showStatus(`Login successful! Invalid device ID replaced with: ${discoveredDevices[0].name}`, 'success');
+            } else {
+              throw new Error('No coop doors discovered. Please ensure your coop door is connected to your account and try again.');
+            }
+          }
+        } else {
+          if (validateResult.devices.length > 0) {
+            discoveredDevices = validateResult.devices;
+            displayDevices(discoveredDevices);
+            finalDeviceId = discoveredDevices[0].deviceId;
+            showStatus(`Login successful! Found device: ${discoveredDevices[0].name}`, 'success');
+          } else {
+            throw new Error('No coop doors discovered. Please ensure your coop door is connected to your account and try again.');
+          }
+        }
+      }
       
-      // Step 3: Update config with credentials and token
+      // Save configuration
       const newConfig = {
         ...currentConfig,
         name: currentConfig.name || 'Omlet Coop',
         platform: 'OmletCoop',
-        email: email,
-        password: password,
         countryCode: countryCode,
-        bearerToken: discoveredToken
+        apiServer: apiServer,
+        bearerToken: finalToken,
+        deviceId: finalDeviceId,
+        pollInterval: pollInterval,
+        enableLight: enableLight,
+        debug: debugMode
       };
       
-      // If only one device, auto-select it
-      if (discoveredDevices.length === 1) {
-        newConfig.deviceId = discoveredDevices[0].deviceId;
-        showStatus(`Success! Found 1 device: ${discoveredDevices[0].name}`, 'success');
-      } else if (discoveredDevices.length > 1) {
-        // Multiple devices - use first one, user can change in config
-        newConfig.deviceId = discoveredDevices[0].deviceId;
-        showStatus(`Found ${discoveredDevices.length} devices. Using "${discoveredDevices[0].name}". You can change this in Advanced Settings.`, 'success');
+      // Only save credentials if appropriate
+      if (shouldSaveCredentials) {
+        newConfig.email = email;
+        newConfig.password = password;
       } else {
-        showStatus('No devices found on your account', 'error');
-        loginButton.disabled = false;
-        loginButton.textContent = 'Login & Discover Devices';
-        return;
+        // Clear credentials from config if not saving
+        delete newConfig.email;
+        delete newConfig.password;
       }
       
-      // Save config
       await homebridge.updatePluginConfig([newConfig]);
       await homebridge.savePluginConfig();
       
@@ -246,7 +572,7 @@
       console.error('Error:', error);
       showStatus(`Error: ${error.message}`, 'error');
       loginButton.disabled = false;
-      loginButton.textContent = 'Login & Discover Devices';
+      loginButton.textContent = 'Login';
     }
   });
   

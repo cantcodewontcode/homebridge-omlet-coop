@@ -35,24 +35,24 @@
         "description": "Your country"
       },
       "apiServer": {
-        "title": "Omlet API Server",
+        "title": "API Server",
         "type": "string",
         "required": false,
         "default": "x107.omlet.co.uk",
         "description": "Omlet API server hostname (default is x107.omlet.co.uk)"
       },
       "bearerToken": {
-        "title": "Bearer Token",
+        "title": "API Token",
         "type": "string",
         "required": false,
-        "description": "Manual bearer token (alternative to email/password). If provided with Device ID, email/password are not required."
+        "description": "Provide API token instead of email address and password, if desired."
       },
       "deviceId": {
         "title": "Device ID",
         "type": "string",
         "required": false,
-        "placeholder": "Leave blank for auto-discovery",
-        "description": "Leave blank for auto-discovery. For accounts with multiple devices, use this to specify your Device ID."
+        "placeholder": "optional, will be auto-discovered",
+        "description": "Provide Device ID to skip coop door auto-discovery, or to specify a coop door if you have multiple doors."
       },
       "pollInterval": {
         "title": "Poll Interval (seconds)",
@@ -68,6 +68,13 @@
         "required": false,
         "default": false,
         "description": "Enable detailed logging for troubleshooting"
+      },
+      "enableLight": {
+        "title": "Enable Coop Light Accessory",
+        "type": "boolean",
+        "required": false,
+        "default": true,
+        "description": "Enable control of the Omlet Coop Light (only check if you have the light module installed)"
       }
     }
   },
@@ -86,6 +93,7 @@
         "bearerToken",
         "deviceId",
         "pollInterval",
+        "enableLight",
         "debug"
       ]
     }
