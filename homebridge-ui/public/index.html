@@ -297,6 +297,44 @@ function togglePasswordVisibility() {
     document.getElementById('enableLight').checked = currentConfig.enableLight;
   }
   
+  // Auto-update config when form fields change (so built-in Save button works)
+  async function updateConfigFromForm() {
+    const updatedConfig = {
+      ...currentConfig,
+      name: currentConfig.name || 'Omlet Coop',
+      platform: 'OmletCoop',
+      email: document.getElementById('email').value.trim() || undefined,
+      password: document.getElementById('password').value.trim() || undefined,
+      countryCode: document.getElementById('countryCode').value,
+      apiServer: document.getElementById('apiServer').value || 'x107.omlet.co.uk',
+      bearerToken: document.getElementById('manualToken').value.trim() || undefined,
+      deviceId: document.getElementById('manualDeviceId').value.trim() || undefined,
+      pollInterval: parseInt(document.getElementById('pollInterval').value) || 30,
+      enableLight: document.getElementById('enableLight').checked,
+      debug: document.getElementById('debugMode').checked
+    };
+    
+    // Remove undefined values to keep config clean
+    Object.keys(updatedConfig).forEach(key => {
+      if (updatedConfig[key] === undefined) {
+        delete updatedConfig[key];
+      }
+    });
+    
+    await homebridge.updatePluginConfig([updatedConfig]);
+  }
+  
+  // Add event listeners to all form fields
+  document.getElementById('email').addEventListener('change', updateConfigFromForm);
+  document.getElementById('password').addEventListener('change', updateConfigFromForm);
+  document.getElementById('countryCode').addEventListener('change', updateConfigFromForm);
+  document.getElementById('apiServer').addEventListener('change', updateConfigFromForm);
+  document.getElementById('manualToken').addEventListener('change', updateConfigFromForm);
+  document.getElementById('manualDeviceId').addEventListener('change', updateConfigFromForm);
+  document.getElementById('pollInterval').addEventListener('change', updateConfigFromForm);
+  document.getElementById('enableLight').addEventListener('change', updateConfigFromForm);
+  document.getElementById('debugMode').addEventListener('change', updateConfigFromForm);
+  
   // Show status message
   function showStatus(message, type) {
     const statusDiv = document.getElementById('statusMessage');
@@ -563,10 +601,10 @@ function togglePasswordVisibility() {
       }
       
       await homebridge.updatePluginConfig([newConfig]);
-      await homebridge.savePluginConfig();
       
-      showStatus('Configuration saved! Please restart Homebridge to apply changes.', 'success');
-      loginButton.textContent = 'Configuration Saved ✓';
+      showStatus('Login successful! Click "Save" to apply changes.', 'success');
+      loginButton.textContent = 'Login Successful ✓';
+      loginButton.disabled = false;
       
     } catch (error) {
       console.error('Error:', error);

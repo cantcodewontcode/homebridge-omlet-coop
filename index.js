@@ -58,17 +58,37 @@ class OmletCoopPlatform {
   
   async initialize() {
     try {
-      // Check if using manual token mode
-      if (this.bearerToken && this.deviceId) {
+      // Check if using manual token mode (token required, deviceId optional)
+      if (this.bearerToken) {
         this.log.info('Using manual bearer token mode');
         this.currentToken = this.bearerToken;
         
-        // Skip login and discovery, go straight to creating accessories
+        // Auto-discover device if not provided
+        if (!this.deviceId) {
+          this.log.warn('No device ID configured, attempting auto-discovery...');
+          await this.autoDiscoverDevice();
+          
+          if (!this.deviceId) {
+            this.log.error('No device ID found! Cannot continue.');
+            this.log.error('Please check that your Omlet device is online and connected.');
+            return;
+          }
+        }
+        
+        // Create accessories
         await this.discoverDevices();
         return;
       }
       
-      // Auto-login mode
+      // Auto-login mode (requires email + password)
+      if (!this.email || !this.password) {
+        this.log.error('Configuration error: Email and password are required for auto-login mode');
+        this.log.error('Please provide either:');
+        this.log.error('  1. Email + Password (for auto-login), OR');
+        this.log.error('  2. Bearer Token (manual token mode)');
+        return;
+      }
+      
       this.log.info('Logging in to Omlet API...');
       await this.login();
       
@@ -323,36 +343,18 @@ class OmletCoopPlatform {
   async discoverDevices() {
     this.log.info('Setting up Homebridge accessories...');
     
-    // Create Light Accessory (only if enabled)
-    if (this.enableLight) {
-      const lightUuid = this.api.hap.uuid.generate('omlet-light-' + this.deviceId);
-      const existingLight = this.accessories.find(accessory => accessory.UUID === lightUuid);
-      
-      if (existingLight) {
-        this.log.info('Restoring existing accessory from cache:', existingLight.displayName);
-        new OmletLightAccessory(this, existingLight);
-      } else {
-        this.log.info('Adding new accessory: Coop Light');
-        const lightAccessory = new this.api.platformAccessory('Coop Light', lightUuid);
-        new OmletLightAccessory(this, lightAccessory);
-        this.api.registerPlatformAccessories('homebridge-omlet', 'OmletCoop', [lightAccessory]);
-      }
-    } else {
-      this.log.info('Coop Light accessory disabled in config');
-    }
+    // Create ONE accessory with multiple services (linked services pattern)
+    const uuid = this.api.hap.uuid.generate('omlet-coop-' + this.deviceId);
+    const existingAccessory = this.accessories.find(accessory => accessory.UUID === uuid);
     
-    // Create Door Accessory
-    const doorUuid = this.api.hap.uuid.generate('omlet-door-' + this.deviceId);
-    const existingDoor = this.accessories.find(accessory => accessory.UUID === doorUuid);
-    
-    if (existingDoor) {
-      this.log.info('Restoring existing accessory from cache:', existingDoor.displayName);
-      new OmletGarageDoorAccessory(this, existingDoor);
+    if (existingAccessory) {
+      this.log.info('Restoring existing accessory from cache:', existingAccessory.displayName);
+      new OmletCoopAccessory(this, existingAccessory);
     } else {
-      this.log.info('Adding new accessory: Coop Door');
-      const doorAccessory = new this.api.platformAccessory('Coop Door', doorUuid);
-      new OmletGarageDoorAccessory(this, doorAccessory);
-      this.api.registerPlatformAccessories('homebridge-omlet', 'OmletCoop', [doorAccessory]);
+      this.log.info('Adding new accessory: Omlet Coop');
+      const coopAccessory = new this.api.platformAccessory('Omlet Coop', uuid);
+      new OmletCoopAccessory(this, coopAccessory);
+      this.api.registerPlatformAccessories('homebridge-omlet', 'OmletCoop', [coopAccessory]);
     }
   }
   
@@ -366,8 +368,8 @@ class OmletCoopPlatform {
   }
 }
 
-// Light and Door accessory classes remain the same...
-class OmletLightAccessory {
+// Combined accessory with linked services
+class OmletCoopAccessory {
   constructor(platform, accessory) {
     this.platform = platform;
     this.accessory = accessory;
@@ -376,33 +378,71 @@ class OmletLightAccessory {
     this.deviceId = platform.deviceId;
     this.baseUrl = platform.baseUrl;
     this.pollInterval = platform.pollInterval;
+    this.enableLight = platform.enableLight;
     this.debug = platform.debug;
+    
+    // IMPORTANT: Remove light service FIRST if disabled (before setting up anything else)
+    if (!this.enableLight) {
+      const existingLight = this.accessory.getService(hap.Service.Lightbulb);
+      if (existingLight) {
+        this.log.warn('Light disabled in config, removing light service...');
+        this.accessory.removeService(existingLight);
+      }
+    }
     
     // Set accessory information
     this.accessory.getService(hap.Service.AccessoryInformation)
       .setCharacteristic(hap.Characteristic.Manufacturer, 'Omlet')
-      .setCharacteristic(hap.Characteristic.Model, 'Autodoor Light')
-      .setCharacteristic(hap.Characteristic.SerialNumber, this.deviceId + '-light');
+      .setCharacteristic(hap.Characteristic.Model, 'Smart Autodoor')
+      .setCharacteristic(hap.Characteristic.SerialNumber, this.deviceId);
     
-    // Get or create the lightbulb service
-    this.service = this.accessory.getService(hap.Service.Lightbulb) 
-      || this.accessory.addService(hap.Service.Lightbulb);
+    // Create Door Service (PRIMARY SERVICE)
+    this.doorService = this.accessory.getService(hap.Service.GarageDoorOpener) 
+      || this.accessory.addService(hap.Service.GarageDoorOpener);
     
-    this.service.setCharacteristic(hap.Characteristic.Name, 'Coop Light');
+    this.doorService.setCharacteristic(hap.Characteristic.Name, 'Coop Door');
+    this.doorService.setPrimaryService(true); // Door is the primary service
     
-    // Set up the On characteristic
-    this.service
-      .getCharacteristic(hap.Characteristic.On)
-      .onGet(this.getOn.bind(this))
-      .onSet(this.setOn.bind(this));
+    // Set up door characteristics
+    this.doorService
+      .getCharacteristic(hap.Characteristic.CurrentDoorState)
+      .onGet(this.getCurrentDoorState.bind(this));
+    
+    this.doorService
+      .getCharacteristic(hap.Characteristic.TargetDoorState)
+      .onGet(this.getTargetDoorState.bind(this))
+      .onSet(this.setTargetDoorState.bind(this));
+    
+    this.doorService
+      .getCharacteristic(hap.Characteristic.ObstructionDetected)
+      .onGet(() => false);
+    
+    // Create Light Service (LINKED SERVICE) - only if enabled
+    if (this.enableLight) {
+      this.lightService = this.accessory.getService(hap.Service.Lightbulb) 
+        || this.accessory.addService(hap.Service.Lightbulb);
+      
+      this.lightService.setCharacteristic(hap.Characteristic.Name, 'Coop Light');
+      this.lightService.addLinkedService(this.doorService); // Link to door service
+      
+      // Set up light characteristics
+      this.lightService
+        .getCharacteristic(hap.Characteristic.On)
+        .onGet(this.getLightOn.bind(this))
+        .onSet(this.setLightOn.bind(this));
+        
+      this.log.info('Coop accessory initialized with door and light services');
+    } else {
+      this.log.info('Coop accessory initialized with door service only (light disabled)');
+    }
     
     // Start polling
     this.startPolling();
-    
-    this.log.info('Light accessory initialized');
   }
   
-  async getOn() {
+  // === LIGHT METHODS ===
+  
+  async getLightOn() {
     try {
       if (this.debug) {
         this.log.info('[Light] Getting current state...');
@@ -439,7 +479,7 @@ class OmletLightAccessory {
     }
   }
   
-  async setOn(value) {
+  async setLightOn(value) {
     const action = value ? 'on' : 'off';
     
     try {
@@ -629,50 +669,8 @@ class OmletLightAccessory {
     
     this.log.info('Light polling started: every', this.pollInterval / 1000, 'seconds');
   }
-}
-
-class OmletGarageDoorAccessory {
-  constructor(platform, accessory) {
-    this.platform = platform;
-    this.accessory = accessory;
-    this.log = platform.log;
-    
-    this.deviceId = platform.deviceId;
-    this.baseUrl = platform.baseUrl;
-    this.pollInterval = platform.pollInterval;
-    this.debug = platform.debug;
-    
-    // Set accessory information
-    this.accessory.getService(hap.Service.AccessoryInformation)
-      .setCharacteristic(hap.Characteristic.Manufacturer, 'Omlet')
-      .setCharacteristic(hap.Characteristic.Model, 'Autodoor')
-      .setCharacteristic(hap.Characteristic.SerialNumber, this.deviceId + '-door');
-    
-    // Get or create the garage door opener service
-    this.service = this.accessory.getService(hap.Service.GarageDoorOpener) 
-      || this.accessory.addService(hap.Service.GarageDoorOpener);
-    
-    this.service.setCharacteristic(hap.Characteristic.Name, 'Coop Door');
-    
-    // Set up characteristics
-    this.service
-      .getCharacteristic(hap.Characteristic.CurrentDoorState)
-      .onGet(this.getCurrentDoorState.bind(this));
-    
-    this.service
-      .getCharacteristic(hap.Characteristic.TargetDoorState)
-      .onGet(this.getTargetDoorState.bind(this))
-      .onSet(this.setTargetDoorState.bind(this));
-    
-    this.service
-      .getCharacteristic(hap.Characteristic.ObstructionDetected)
-      .onGet(() => false);
-    
-    // Start polling
-    this.startPolling();
-    
-    this.log.info('Door accessory initialized');
-  }
+  
+  // === DOOR METHODS ===
   
   async getCurrentDoorState() {
     try {
@@ -759,7 +757,7 @@ class OmletGarageDoorAccessory {
         ? hap.Characteristic.CurrentDoorState.OPENING
         : hap.Characteristic.CurrentDoorState.CLOSING;
       
-      this.service
+      this.doorService
         .getCharacteristic(hap.Characteristic.CurrentDoorState)
         .updateValue(newCurrentState);
         
@@ -779,7 +777,7 @@ class OmletGarageDoorAccessory {
               ? hap.Characteristic.CurrentDoorState.OPENING
               : hap.Characteristic.CurrentDoorState.CLOSING;
             
-            this.service
+            this.doorService
               .getCharacteristic(hap.Characteristic.CurrentDoorState)
               .updateValue(newCurrentState);
             
@@ -793,6 +791,8 @@ class OmletGarageDoorAccessory {
       throw new Error('Failed to set door state');
     }
   }
+  
+  // === SHARED API METHODS ===
   
   sendAction(action) {
     return new Promise((resolve, reject) => {
@@ -941,21 +941,31 @@ class OmletGarageDoorAccessory {
   startPolling() {
     setInterval(async () => {
       try {
+        // Poll door state
         const currentState = await this.getCurrentDoorState();
-        this.service
+        this.doorService
           .getCharacteristic(hap.Characteristic.CurrentDoorState)
           .updateValue(currentState);
           
         const targetState = await this.getTargetDoorState();
-        this.service
+        this.doorService
           .getCharacteristic(hap.Characteristic.TargetDoorState)
           .updateValue(targetState);
+        
+        // Poll light state (only if enabled)
+        if (this.enableLight && this.lightService) {
+          const isOn = await this.getLightOn();
+          this.lightService
+            .getCharacteristic(hap.Characteristic.On)
+            .updateValue(isOn);
+        }
           
       } catch (error) {
-        // Already logged in getCurrentDoorState()
+        // Already logged in individual methods
       }
     }, this.pollInterval);
     
-    this.log.info('Door polling started: every', this.pollInterval / 1000, 'seconds');
+    const services = this.enableLight ? 'door and light' : 'door';
+    this.log.info(`Polling started for ${services}: every ${this.pollInterval / 1000} seconds`);
   }
 }
