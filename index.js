@@ -21,6 +21,7 @@ class OmletCoopPlatform {
     this.deviceId = config.deviceId;
     this.baseUrl = config.apiServer || 'x107.omlet.co.uk';
     this.pollInterval = Math.max((config.pollInterval || 30), 30) * 1000;
+    this.enableLight = config.enableLight !== false; // Default true for backwards compatibility
     this.debug = config.debug || false;
     
     // Token management
@@ -322,18 +323,22 @@ class OmletCoopPlatform {
   async discoverDevices() {
     this.log.info('Setting up Homebridge accessories...');
     
-    // Create Light Accessory
-    const lightUuid = this.api.hap.uuid.generate('omlet-light-' + this.deviceId);
-    const existingLight = this.accessories.find(accessory => accessory.UUID === lightUuid);
-    
-    if (existingLight) {
-      this.log.info('Restoring existing accessory from cache:', existingLight.displayName);
-      new OmletLightAccessory(this, existingLight);
+    // Create Light Accessory (only if enabled)
+    if (this.enableLight) {
+      const lightUuid = this.api.hap.uuid.generate('omlet-light-' + this.deviceId);
+      const existingLight = this.accessories.find(accessory => accessory.UUID === lightUuid);
+      
+      if (existingLight) {
+        this.log.info('Restoring existing accessory from cache:', existingLight.displayName);
+        new OmletLightAccessory(this, existingLight);
+      } else {
+        this.log.info('Adding new accessory: Coop Light');
+        const lightAccessory = new this.api.platformAccessory('Coop Light', lightUuid);
+        new OmletLightAccessory(this, lightAccessory);
+        this.api.registerPlatformAccessories('homebridge-omlet', 'OmletCoop', [lightAccessory]);
+      }
     } else {
-      this.log.info('Adding new accessory: Coop Light');
-      const lightAccessory = new this.api.platformAccessory('Coop Light', lightUuid);
-      new OmletLightAccessory(this, lightAccessory);
-      this.api.registerPlatformAccessories('homebridge-omlet', 'OmletCoop', [lightAccessory]);
+      this.log.info('Coop Light accessory disabled in config');
     }
     
     // Create Door Accessory
