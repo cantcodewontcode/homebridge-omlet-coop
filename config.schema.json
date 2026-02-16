@@ -2,6 +2,7 @@
   "pluginAlias": "OmletCoop",
   "pluginType": "platform",
   "singular": true,
+  "customUi": true,
   "schema": {
     "type": "object",
     "properties": {
@@ -9,34 +10,57 @@
         "title": "Name",
         "type": "string",
         "required": true,
-        "default": "Omlet Coop"
+        "default": "Omlet Coop",
+        "description": "Name for this plugin instance"
+      },
+      "email": {
+        "title": "Email Address",
+        "type": "string",
+        "required": false,
+        "format": "email",
+        "description": "Your Omlet account email address"
+      },
+      "password": {
+        "title": "Password",
+        "type": "string",
+        "required": false,
+        "description": "Your Omlet account password"
+      },
+      "countryCode": {
+        "title": "Country Code",
+        "type": "string",
+        "required": true,
+        "default": "US",
+        "enum": ["AU", "DE", "DK", "FR", "IE", "IT", "NL", "SE", "UK", "US"],
+        "description": "Your country"
+      },
+      "apiServer": {
+        "title": "Omlet API Server",
+        "type": "string",
+        "required": false,
+        "default": "x107.omlet.co.uk",
+        "description": "Omlet API server hostname (default is x107.omlet.co.uk)"
       },
       "bearerToken": {
         "title": "Bearer Token",
         "type": "string",
-        "required": true,
-        "description": "API bearer token from Omlet (see README for instructions on obtaining this)"
+        "required": false,
+        "description": "Manual bearer token (alternative to email/password). If provided with Device ID, email/password are not required."
       },
       "deviceId": {
         "title": "Device ID",
         "type": "string",
-        "required": true,
-        "description": "Your Omlet device ID (see README for instructions)"
-      },
-      "apiServer": {
-        "title": "API Server (Advanced)",
-        "type": "string",
         "required": false,
-        "default": "x107.omlet.co.uk",
-        "description": "Omlet API server hostname (usually no need to change)"
+        "placeholder": "Leave blank for auto-discovery",
+        "description": "Leave blank for auto-discovery. For accounts with multiple devices, use this to specify your Device ID."
       },
       "pollInterval": {
         "title": "Poll Interval (seconds)",
         "type": "integer",
         "required": false,
         "default": 30,
-        "minimum": 10,
-        "description": "How often to check device status"
+        "minimum": 30,
+        "description": "How often to check device status (minimum 30 seconds)"
       },
       "debug": {
         "title": "Debug Mode",
@@ -46,5 +70,24 @@
         "description": "Enable detailed logging for troubleshooting"
       }
     }
-  }
+  },
+  "layout": [
+    "name",
+    "email",
+    "password",
+    "countryCode",
+    {
+      "type": "fieldset",
+      "title": "Advanced Settings",
+      "expandable": true,
+      "expanded": false,
+      "items": [
+        "apiServer",
+        "bearerToken",
+        "deviceId",
+        "pollInterval",
+        "debug"
+      ]
+    }
+  ]
 }

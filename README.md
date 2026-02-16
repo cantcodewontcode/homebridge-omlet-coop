@@ -34,33 +34,7 @@ npm install -g homebridge-omlet-coop
 
 ## Configuration
 
-### Getting Your Bearer Token and Device ID
-
-**Note:** Obtaining these values requires using the command line. A simplified setup process is planned for future releases.
-
-#### Using API Login (Recommended)
-
-**Step 1: Get your bearer token**
-
-```bash
-curl -X POST https://x107.omlet.co.uk/api/v1/login \
-  -H "Content-Type: application/json" \
-  -d '{"emailAddress":"your@email.com","password":"yourpassword","cc":"US"}'
-```
-
-The response will contain your `apiKey` - this is your bearer token:
-```json
-{"apiKey":"your_token_here"}
-```
-
-**Step 2: Get your device ID**
-
-```bash
-curl -s https://x107.omlet.co.uk/api/v1/group \
-  -H "Authorization: Bearer YOUR_TOKEN_HERE"
-```
-
-Look for your device in the response. The `deviceId` field is what you need.
+The plugin automatically handles authentication and device discovery. Simply provide your Omlet account credentials.
 
 ### Config.json Example
 
@@ -72,14 +46,20 @@ Add this to your Homebridge `config.json`:
     {
       "platform": "OmletCoop",
       "name": "Omlet Coop",
-      "bearerToken": "YOUR_BEARER_TOKEN_HERE",
-      "deviceId": "YOUR_DEVICE_ID_HERE",
-      "pollInterval": 30,
-      "debug": false
+      "email": "your@email.com",
+      "password": "yourpassword",
+      "countryCode": "GB",
+      "pollInterval": 30
     }
   ]
 }
 ```
+
+**On first startup:**
+- The plugin will automatically log in to Omlet
+- It will discover your device(s)
+- If you have one device, it will be auto-configured
+- If you have multiple devices, check the Homebridge logs for device IDs and add the one you want to your config
 
 ### Configuration Options
 
@@ -87,11 +67,26 @@ Add this to your Homebridge `config.json`:
 |--------|----------|---------|-------------|
 | `platform` | Yes | - | Must be `OmletCoop` |
 | `name` | Yes | `Omlet Coop` | Name for this plugin instance |
-| `bearerToken` | Yes | - | Your Omlet API bearer token |
-| `deviceId` | Yes | - | Your Omlet device ID |
+| `email` | Yes | - | Your Omlet account email address |
+| `password` | Yes | - | Your Omlet account password |
+| `countryCode` | No | `GB` | Your country code (GB, US, CA, AU, etc.) |
+| `deviceId` | No | Auto-discovered | Your device ID (only needed if you have multiple devices) |
 | `apiServer` | No | `x107.omlet.co.uk` | API server hostname (advanced users only) |
 | `pollInterval` | No | `30` | How often to check status (in seconds, minimum 10) |
 | `debug` | No | `false` | Enable detailed logging |
+
+### Multiple Devices
+
+If you have multiple Omlet devices, the plugin will log them on startup:
+
+```
+[Omlet Coop] Multiple devices found on your account:
+[Omlet Coop]   1. Teresa's Coop (AspWG0eOmzEXInjJ)
+[Omlet Coop]   2. Backyard Coop (XyzABC123def)
+[Omlet Coop] → Please add one to your config.json: "deviceId": "DEVICE_ID_HERE"
+```
+
+Add the `deviceId` of the device you want to use to your config.
 
 ## Usage
 
