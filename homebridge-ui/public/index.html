@@ -1,0 +1,275 @@
+<style>
+  .card {
+    padding: 20px;
+    background: #fff;
+    border-radius: 8px;
+    margin-bottom: 20px;
+  }
+  .form-group {
+    margin-bottom: 15px;
+  }
+  .form-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 500;
+  }
+  .form-control {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 14px;
+  }
+  .btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+  }
+  .btn-primary {
+    background: #007bff;
+    color: white;
+  }
+  .btn-primary:hover {
+    background: #0056b3;
+  }
+  .btn-primary:disabled {
+    background: #6c757d;
+    cursor: not-allowed;
+  }
+  .device-list {
+    margin-top: 20px;
+  }
+  .device-item {
+    padding: 15px;
+    background: #f8f9fa;
+    border-radius: 6px;
+    margin-bottom: 10px;
+  }
+  .device-item h4 {
+    margin: 0 0 5px 0;
+    font-size: 16px;
+  }
+  .device-item p {
+    margin: 0;
+    font-size: 13px;
+    color: #666;
+  }
+  .status-message {
+    padding: 12px;
+    border-radius: 4px;
+    margin-bottom: 15px;
+  }
+  .status-success {
+    background: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+  }
+  .status-error {
+    background: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+  }
+  .status-info {
+    background: #d1ecf1;
+    color: #0c5460;
+    border: 1px solid #bee5eb;
+  }
+  .hidden {
+    display: none;
+  }
+</style>
+
+<div class="card">
+  <h3>Omlet Coop Setup</h3>
+  <p>Enter your Omlet account credentials to automatically configure your plugin.</p>
+  
+  <div id="statusMessage" class="hidden"></div>
+  
+  <div id="loginForm">
+    <div class="form-group">
+      <label for="email">Email Address</label>
+      <input type="email" class="form-control" id="email" placeholder="your@email.com" required>
+    </div>
+    
+    <div class="form-group">
+      <label for="password">Password</label>
+      <input type="password" class="form-control" id="password" placeholder="Your Omlet password" required>
+    </div>
+    
+    <div class="form-group">
+      <label for="countryCode">Country Code</label>
+      <select class="form-control" id="countryCode" required>
+        <option value="AU">AU - Australia</option>
+        <option value="DK">DK - Denmark</option>
+        <option value="FR">FR - France</option>
+        <option value="DE">DE - Germany</option>
+        <option value="IT">IT - Italy</option>
+        <option value="IE">IE - Ireland</option>
+        <option value="NL">NL - Netherlands</option>
+        <option value="SE">SE - Sweden</option>
+        <option value="UK">UK - United Kingdom</option>
+        <option value="US" selected>US - United States</option>
+      </select>
+    </div>
+    
+    <button id="loginButton" class="btn btn-primary">Login & Discover Devices</button>
+  </div>
+  
+  <div id="devicesSection" class="hidden">
+    <h4>Discovered Devices</h4>
+    <div id="deviceList" class="device-list"></div>
+  </div>
+</div>
+
+<script>
+(async () => {
+  let currentConfig = null;
+  let discoveredToken = null;
+  let discoveredDevices = [];
+  
+  // Get current config
+  try {
+    const configs = await homebridge.getPluginConfig();
+    currentConfig = configs && configs.length > 0 ? configs[0] : {};
+  } catch (error) {
+    console.error('Error loading config:', error);
+    currentConfig = {};
+  }
+  
+  // Pre-fill form if we have existing config
+  if (currentConfig.email) {
+    document.getElementById('email').value = currentConfig.email;
+  }
+  if (currentConfig.password) {
+    document.getElementById('password').value = currentConfig.password;
+  }
+  if (currentConfig.countryCode) {
+    document.getElementById('countryCode').value = currentConfig.countryCode;
+  }
+  
+  // Show status message
+  function showStatus(message, type) {
+    const statusDiv = document.getElementById('statusMessage');
+    statusDiv.className = `status-message status-${type}`;
+    statusDiv.textContent = message;
+    statusDiv.classList.remove('hidden');
+  }
+  
+  // Hide status message
+  function hideStatus() {
+    document.getElementById('statusMessage').classList.add('hidden');
+  }
+  
+  // Handle login and discovery
+  document.getElementById('loginButton').addEventListener('click', async () => {
+    const email = document.getElementById('email').value.trim();
+    const password = document.getElementById('password').value;
+    const countryCode = document.getElementById('countryCode').value;
+    
+    if (!email || !password) {
+      showStatus('Please enter email and password', 'error');
+      return;
+    }
+    
+    const loginButton = document.getElementById('loginButton');
+    loginButton.disabled = true;
+    loginButton.textContent = 'Logging in...';
+    hideStatus();
+    
+    try {
+      // Step 1: Login to get token
+      showStatus('Logging in to Omlet...', 'info');
+      const loginResult = await homebridge.request('/login', {
+        email: email,
+        password: password,
+        countryCode: countryCode
+      });
+      
+      if (!loginResult.success || !loginResult.token) {
+        throw new Error('Login failed - no token received');
+      }
+      
+      discoveredToken = loginResult.token;
+      
+      // Step 2: Discover devices
+      showStatus('Discovering devices...', 'info');
+      const discoverResult = await homebridge.request('/discover', {
+        token: discoveredToken
+      });
+      
+      if (!discoverResult.success || !discoverResult.devices) {
+        throw new Error('Discovery failed - no devices found');
+      }
+      
+      discoveredDevices = discoverResult.devices;
+      
+      // Display devices
+      displayDevices(discoveredDevices);
+      
+      // Step 3: Update config with credentials and token
+      const newConfig = {
+        ...currentConfig,
+        name: currentConfig.name || 'Omlet Coop',
+        platform: 'OmletCoop',
+        email: email,
+        password: password,
+        countryCode: countryCode,
+        bearerToken: discoveredToken
+      };
+      
+      // If only one device, auto-select it
+      if (discoveredDevices.length === 1) {
+        newConfig.deviceId = discoveredDevices[0].deviceId;
+        showStatus(`Success! Found 1 device: ${discoveredDevices[0].name}`, 'success');
+      } else if (discoveredDevices.length > 1) {
+        // Multiple devices - use first one, user can change in config
+        newConfig.deviceId = discoveredDevices[0].deviceId;
+        showStatus(`Found ${discoveredDevices.length} devices. Using "${discoveredDevices[0].name}". You can change this in Advanced Settings.`, 'success');
+      } else {
+        showStatus('No devices found on your account', 'error');
+        loginButton.disabled = false;
+        loginButton.textContent = 'Login & Discover Devices';
+        return;
+      }
+      
+      // Save config
+      await homebridge.updatePluginConfig([newConfig]);
+      await homebridge.savePluginConfig();
+      
+      showStatus('Configuration saved! Please restart Homebridge to apply changes.', 'success');
+      loginButton.textContent = 'Configuration Saved ✓';
+      
+    } catch (error) {
+      console.error('Error:', error);
+      showStatus(`Error: ${error.message}`, 'error');
+      loginButton.disabled = false;
+      loginButton.textContent = 'Login & Discover Devices';
+    }
+  });
+  
+  // Display discovered devices
+  function displayDevices(devices) {
+    const deviceList = document.getElementById('deviceList');
+    const devicesSection = document.getElementById('devicesSection');
+    
+    deviceList.innerHTML = '';
+    
+    devices.forEach((device, index) => {
+      const deviceDiv = document.createElement('div');
+      deviceDiv.className = 'device-item';
+      deviceDiv.innerHTML = `
+        <h4>${device.name}</h4>
+        <p><strong>Device ID:</strong> ${device.deviceId}</p>
+        <p><strong>Type:</strong> ${device.type}</p>
+        ${index === 0 ? '<p style="color: #28a745; font-weight: 500;">✓ This device will be used</p>' : ''}
+      `;
+      deviceList.appendChild(deviceDiv);
+    });
+    
+    devicesSection.classList.remove('hidden');
+  }
+})();
+</script>
