@@ -140,10 +140,8 @@ You can:
 - Better error handling and recovery
 
 ### Future Versions
-- Support for multiple devices
-- Battery level monitoring
-- Door scheduling via HomeKit
-- Push notifications for door events
+- Support for multiple coop doors
+- Battery level monitoring (if feasible with HomeKit garage door accessory)
 
 ## Support
 
