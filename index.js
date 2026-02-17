@@ -333,6 +333,9 @@ class OmletCoopPlatform {
             try {
               const json = JSON.parse(data);
               if (json.apiKey) {
+                if (this.debug) {
+                  this.log.info('[Auth] Bearer token received:', json.apiKey);
+                }
                 resolve(json.apiKey);
               } else {
                 reject(new Error('No apiKey in response'));
@@ -421,24 +424,31 @@ class OmletCoopPlatform {
         });
         
         res.on('end', () => {
+          if (this.debug) {
+            this.log.info('[Discovery] Response status:', res.statusCode);
+          }
           if (res.statusCode === 200) {
             try {
               const json = JSON.parse(data);
               const devices = [];
               
-              // Extract devices from groups
-              if (json.groups && Array.isArray(json.groups)) {
-                json.groups.forEach(group => {
-                  if (group.devices && Array.isArray(group.devices)) {
-                    group.devices.forEach(device => {
-                      devices.push({
-                        deviceId: device.deviceId,
-                        name: device.name || 'Omlet Device',
-                        type: device.deviceType || 'unknown'
-                      });
+              // The API returns an array of groups directly
+              const groups = Array.isArray(json) ? json : (json.groups || []);
+              
+              groups.forEach(group => {
+                if (group.devices && Array.isArray(group.devices)) {
+                  group.devices.forEach(device => {
+                    devices.push({
+                      deviceId: device.deviceId,
+                      name: device.name || 'Omlet Device',
+                      type: device.deviceType || 'unknown'
                     });
-                  }
-                });
+                  });
+                }
+              });
+              
+              if (this.debug) {
+                this.log.info('[Discovery] Found', devices.length, 'device(s):', devices.map(d => `${d.name} (${d.deviceId})`).join(', '));
               }
               
               resolve(devices);
@@ -541,6 +551,7 @@ class OmletCoopAccessory {
     this.debug = platform.debug;
     
     this.accessoryInfoUpdated = false; // Track if we've updated serial/firmware yet
+    this.cachedStatus = null; // Single shared cache for all services
     
     // IMPORTANT: Remove services FIRST if disabled (before setting up anything else)
     if (!this.enableLight) {
@@ -642,47 +653,16 @@ class OmletCoopAccessory {
   
   async getLightOn() {
     try {
-      if (this.debug) {
-        this.log.info('[Light] Getting current state...');
+      if (!this.cachedStatus) {
+        await this.pollDeviceState();
       }
-      
-      const status = await this.getDeviceStatus('Light');
-      
-      // Validate API response structure
-      if (!status?.state?.light?.state) {
-        this.log.error('[Light] Invalid API response: missing light state');
+      const lightState = this.cachedStatus?.state?.light?.state;
+      if (!lightState) {
         throw new Error('Invalid API response: missing light state');
       }
-      
-      const lightState = status.state.light.state;
-      const isOn = (lightState === 'on' || lightState === 'onpending');
-      
-      if (this.debug) {
-        this.log.info('[Light] Current state:', lightState, '-> isOn:', isOn);
-      }
-      
-      return isOn;
+      return (lightState === 'on' || lightState === 'onpending');
     } catch (error) {
       this.log.error('[Light] Failed to get light state:', error.message);
-      
-      // Check if it's an auth error
-      if (error.statusCode === 401 || error.statusCode === 403) {
-        const refreshed = await this.platform.handleAuthError();
-        if (refreshed) {
-          // Retry once with new token
-          try {
-            const status = await this.getDeviceStatus('Light');
-            if (!status?.state?.light?.state) {
-              throw new Error('Invalid API response: missing light state');
-            }
-            const lightState = status.state.light.state;
-            return (lightState === 'on' || lightState === 'onpending');
-          } catch (retryError) {
-            this.log.error('[Light] Retry after token refresh also failed');
-          }
-        }
-      }
-      
       throw new Error('Failed to get light state');
     }
   }
@@ -692,11 +672,24 @@ class OmletCoopAccessory {
     
     try {
       if (this.debug) {
-        this.log.info('[Light] Setting state to:', action);
+        this.log.info('[Light] Turning', action === 'on' ? 'on light' : 'off light');
       }
       
       await this.sendAction(action, 'Light');
-      this.log.info('[Light] Successfully turned', action);
+      this.log.info('[Light]', action === 'on' ? 'Turning on light' : 'Turning off light');
+      
+      // Eager re-poll: confirm actual state after light has had time to switch
+      setTimeout(async () => {
+        try {
+          await this.pollDeviceState();
+          this.pushStateToHomeKit();
+        } catch (error) {
+          if (this.debug) {
+            this.log.warn('[Light] Eager re-poll failed:', error.message);
+          }
+        }
+      }, 15000);
+      
     } catch (error) {
       this.log.error('[Light] Failed to set light state:', error.message);
       
@@ -707,7 +700,7 @@ class OmletCoopAccessory {
           // Retry once with new token
           try {
             await this.sendAction(action, 'Light');
-            this.log.info('[Light] Successfully turned', action, 'after token refresh');
+            this.log.info('[Light]', action === 'on' ? 'Turning on light' : 'Turning off light', '(after token refresh)');
             return;
           } catch (retryError) {
             this.log.error('[Light] Retry after token refresh also failed');
@@ -723,24 +716,13 @@ class OmletCoopAccessory {
   
   async getBatteryLevel() {
     try {
-      if (this.debug) {
-        this.log.info('[Battery] Getting battery level...');
+      if (!this.cachedStatus) {
+        await this.pollDeviceState();
       }
-      
-      const status = await this.getDeviceStatus('Battery');
-      
-      // Validate API response structure
-      if (status?.state?.general?.batteryLevel === undefined || status?.state?.general?.batteryLevel === null) {
-        this.log.error('[Battery] Invalid API response: missing battery level');
+      const batteryLevel = this.cachedStatus?.state?.general?.batteryLevel;
+      if (batteryLevel === undefined || batteryLevel === null) {
         throw new Error('Invalid API response: missing battery level');
       }
-      
-      const batteryLevel = status.state.general.batteryLevel;
-      
-      if (this.debug) {
-        this.log.info('[Battery] Battery level:', batteryLevel + '%');
-      }
-      
       return batteryLevel;
     } catch (error) {
       this.log.error('[Battery] Failed to get battery level:', error.message);
@@ -750,23 +732,8 @@ class OmletCoopAccessory {
   
   async getChargingState() {
     try {
-      if (this.debug) {
-        this.log.info('[Battery] Getting charging state...');
-      }
-      
-      // ChargingState values:
-      // 0 = NOT_CHARGING
-      // 1 = CHARGING
-      // 2 = NOT_CHARGEABLE
-      // 
-      // Omlet coops use AA batteries (not rechargeable), so always return NOT_CHARGEABLE
-      const chargingState = 2;
-      
-      if (this.debug) {
-        this.log.info('[Battery] ChargingState: 2 (NOT_CHARGEABLE - AA batteries)');
-      }
-      
-      return chargingState;
+      // Omlet coops use AA batteries (not rechargeable), always return NOT_CHARGEABLE
+      return 2;
     } catch (error) {
       this.log.error('[Battery] Failed to get charging state:', error.message);
       throw new Error('Failed to get charging state');
@@ -775,30 +742,14 @@ class OmletCoopAccessory {
   
   async getStatusLowBattery() {
     try {
-      if (this.debug) {
-        this.log.info('[Battery] Getting low battery status...');
+      if (!this.cachedStatus) {
+        await this.pollDeviceState();
       }
-      
-      const status = await this.getDeviceStatus('Battery');
-      
-      // Validate API response structure
-      if (status?.state?.general?.batteryLevel === undefined || status?.state?.general?.batteryLevel === null) {
-        this.log.error('[Battery] Invalid API response: missing battery level');
+      const batteryLevel = this.cachedStatus?.state?.general?.batteryLevel;
+      if (batteryLevel === undefined || batteryLevel === null) {
         throw new Error('Invalid API response: missing battery level');
       }
-      
-      const batteryLevel = status.state.general.batteryLevel;
-      
-      // StatusLowBattery values:
-      // 0 = BATTERY_LEVEL_NORMAL
-      // 1 = BATTERY_LEVEL_LOW
-      const isLow = (batteryLevel < 20) ? 1 : 0;
-      
-      if (this.debug) {
-        this.log.info('[Battery] Battery level:', batteryLevel + '% -> StatusLowBattery:', isLow);
-      }
-      
-      return isLow;
+      return (batteryLevel < 20) ? 1 : 0;
     } catch (error) {
       this.log.error('[Battery] Failed to get low battery status:', error.message);
       throw new Error('Failed to get low battery status');
@@ -851,6 +802,7 @@ class OmletCoopAccessory {
           if (res.statusCode === 200 || res.statusCode === 204) {
             resolve();
           } else {
+            this.log.error(`[${context}] HTTP Error`, res.statusCode, data || '');
             const error = new Error(`HTTP ${res.statusCode}`);
             error.statusCode = res.statusCode;
             error.response = data;
@@ -898,8 +850,7 @@ class OmletCoopAccessory {
       
       if (this.debug) {
         this.log.info(`[${context}] GET`, options.path);
-      }
-      
+      }      
       const req = https.request(options, (res) => {
         let data = '';
         
@@ -915,6 +866,9 @@ class OmletCoopAccessory {
           if (res.statusCode === 200) {
             try {
               const json = JSON.parse(data);
+              if (this.debug) {
+                this.log.info(`[${context}] Full response:`, JSON.stringify(json, null, 2));
+              }
               resolve(json);
             } catch (error) {
               this.log.error(`[${context}] Failed to parse JSON:`, error.message);
@@ -953,21 +907,13 @@ class OmletCoopAccessory {
   
   async getCurrentDoorState() {
     try {
-      if (this.debug) {
-        this.log.info('[Door] Getting current state...');
+      if (!this.cachedStatus) {
+        await this.pollDeviceState();
       }
-      
-      const status = await this.getDeviceStatus('Door');
-      
-      // Validate API response structure
-      if (!status?.state?.door?.state) {
-        this.log.error('[Door] Invalid API response: missing door state');
+      const doorState = this.cachedStatus?.state?.door?.state;
+      if (!doorState) {
         throw new Error('Invalid API response: missing door state');
       }
-      
-      const doorState = status.state.door.state;
-      
-      // Map API states to HomeKit states
       const stateMap = {
         'open': hap.Characteristic.CurrentDoorState.OPEN,
         'closed': hap.Characteristic.CurrentDoorState.CLOSED,
@@ -975,56 +921,23 @@ class OmletCoopAccessory {
         'closing': hap.Characteristic.CurrentDoorState.CLOSING,
         'stopping': hap.Characteristic.CurrentDoorState.STOPPED
       };
-      
-      const currentState = stateMap[doorState] ?? hap.Characteristic.CurrentDoorState.STOPPED;
-      
-      if (this.debug) {
-        this.log.info('[Door] Current state:', doorState, '-> HomeKit:', currentState);
-      }
-      
-      return currentState;
+      return stateMap[doorState] ?? hap.Characteristic.CurrentDoorState.STOPPED;
     } catch (error) {
       this.log.error('[Door] Failed to get door state:', error.message);
-      
-      // Check if it's an auth error
-      if (error.statusCode === 401 || error.statusCode === 403) {
-        const refreshed = await this.platform.handleAuthError();
-        if (refreshed) {
-          // Retry once with new token
-          try {
-            const status = await this.getDeviceStatus('Door');
-            if (!status?.state?.door?.state) {
-              throw new Error('Invalid API response: missing door state');
-            }
-            const doorState = status.state.door.state;
-            const stateMap = {
-              'open': hap.Characteristic.CurrentDoorState.OPEN,
-              'closed': hap.Characteristic.CurrentDoorState.CLOSED,
-              'opening': hap.Characteristic.CurrentDoorState.OPENING,
-              'closing': hap.Characteristic.CurrentDoorState.CLOSING,
-              'stopping': hap.Characteristic.CurrentDoorState.STOPPED
-            };
-            return stateMap[doorState] ?? hap.Characteristic.CurrentDoorState.STOPPED;
-          } catch (retryError) {
-            this.log.error('[Door] Retry after token refresh also failed');
-          }
-        }
-      }
-      
       throw new Error('Failed to get door state');
     }
   }
   
   async getTargetDoorState() {
     try {
-      const currentState = await this.getCurrentDoorState();
-      
-      if (currentState === hap.Characteristic.CurrentDoorState.OPEN || 
-          currentState === hap.Characteristic.CurrentDoorState.OPENING) {
-        return hap.Characteristic.TargetDoorState.OPEN;
-      } else {
-        return hap.Characteristic.TargetDoorState.CLOSED;
+      if (!this.cachedStatus) {
+        await this.pollDeviceState();
       }
+      const doorState = this.cachedStatus?.state?.door?.state;
+      if (doorState === 'open' || doorState === 'opening') {
+        return hap.Characteristic.TargetDoorState.OPEN;
+      }
+      return hap.Characteristic.TargetDoorState.CLOSED;
     } catch (error) {
       this.log.error('[Door] Failed to get target door state:', error.message);
       throw new Error('Failed to get target door state');
@@ -1036,11 +949,11 @@ class OmletCoopAccessory {
     
     try {
       if (this.debug) {
-        this.log.info('[Door] Setting state to:', action);
+        this.log.info('[Door]', action === 'open' ? 'Opening door' : 'Closing door');
       }
       
       await this.sendAction(action, 'Door');
-      this.log.info('[Door] Successfully sent command:', action);
+      this.log.info('[Door]', action === 'open' ? 'Opening door' : 'Closing door');
       
       const newCurrentState = (action === 'open') 
         ? hap.Characteristic.CurrentDoorState.OPENING
@@ -1049,6 +962,18 @@ class OmletCoopAccessory {
       this.doorService
         .getCharacteristic(hap.Characteristic.CurrentDoorState)
         .updateValue(newCurrentState);
+      
+      // Eager re-poll: confirm actual state after door has had time to move
+      setTimeout(async () => {
+        try {
+          await this.pollDeviceState();
+          this.pushStateToHomeKit();
+        } catch (error) {
+          if (this.debug) {
+            this.log.warn('[Door] Eager re-poll failed:', error.message);
+          }
+        }
+      }, 15000);
         
     } catch (error) {
       this.log.error('[Door] Failed to set door state:', error.message);
@@ -1060,7 +985,7 @@ class OmletCoopAccessory {
           // Retry once with new token
           try {
             await this.sendAction(action, 'Door');
-            this.log.info('[Door] Successfully sent command:', action, 'after token refresh');
+            this.log.info('[Door]', action === 'open' ? 'Opening door' : 'Closing door', '(after token refresh)');
             
             const newCurrentState = (action === 'open') 
               ? hap.Characteristic.CurrentDoorState.OPENING
@@ -1081,230 +1006,133 @@ class OmletCoopAccessory {
     }
   }
   
-  // === SHARED API METHODS ===
-  
-  sendAction(action) {
-    return new Promise((resolve, reject) => {
-      const postData = JSON.stringify({});
-      const token = this.platform.getCurrentToken();
-      
-      if (!token) {
-        reject(new Error('No auth token available'));
-        return;
+  // === POLL & CACHE METHODS ===
+
+  async pollDeviceState() {
+    try {
+      const status = await this.getDeviceStatus('Poll');
+      this.cachedStatus = status;
+
+      // Update accessory info on first successful poll
+      if (!this.accessoryInfoUpdated) {
+        const deviceSerial = status.deviceSerial || this.deviceId;
+        const firmware = status.state?.general?.firmwareVersionCurrent || '0.0.0';
+        this.accessory.getService(hap.Service.AccessoryInformation)
+          .setCharacteristic(hap.Characteristic.SerialNumber, deviceSerial)
+          .setCharacteristic(hap.Characteristic.FirmwareRevision, firmware);
+        if (this.debug) {
+          this.log.info('[Info] Updated accessory info: Serial=' + deviceSerial + ', Firmware=' + firmware);
+        }
+        this.accessoryInfoUpdated = true;
       }
-      
-      const options = {
-        hostname: this.baseUrl,
-        port: 443,
-        path: `/api/v1/device/${this.deviceId}/action/${action}`,
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-          'Content-Length': postData.length,
-          'Accept': 'application/json'
-        },
-        timeout: 10000
-      };
-      
-      if (this.debug) {
-        this.log.info('[Door] POST', options.path);
+
+      return status;
+    } catch (error) {
+      if (error.statusCode === 401 || error.statusCode === 403) {
+        const refreshed = await this.platform.handleAuthError();
+        if (refreshed) {
+          try {
+            const status = await this.getDeviceStatus('Poll');
+            this.cachedStatus = status;
+            return status;
+          } catch (retryError) {
+            this.log.error('[Poll] Retry after token refresh failed:', retryError.message);
+            throw retryError;
+          }
+        }
       }
-      
-      const req = https.request(options, (res) => {
-        let data = '';
-        
-        res.on('data', (chunk) => {
-          data += chunk;
-        });
-        
-        res.on('end', () => {
-          if (this.debug) {
-            this.log.info('[Door] Response status:', res.statusCode);
-            if (data) {
-              this.log.info('[Door] Response body:', data);
-            }
-          }
-          
-          if (res.statusCode === 200 || res.statusCode === 204) {
-            resolve();
-          } else {
-            const error = new Error(`HTTP ${res.statusCode}`);
-            error.statusCode = res.statusCode;
-            error.response = data;
-            reject(error);
-          }
-        });
-      });
-      
-      req.on('timeout', () => {
-        req.destroy();
-        this.log.error('[Door] Request timeout after 10 seconds');
-        reject(new Error('Request timeout'));
-      });
-      
-      req.on('error', (error) => {
-        this.log.error('[Door] Network error:', error.message);
-        reject(error);
-      });
-      
-      req.write(postData);
-      req.end();
-    });
+      this.log.error('[Poll] Failed to get device status:', error.message);
+      throw error;
+    }
   }
-  
-  getDeviceStatus() {
-    return new Promise((resolve, reject) => {
-      const token = this.platform.getCurrentToken();
-      
-      if (!token) {
-        reject(new Error('No auth token available'));
-        return;
+
+  pushStateToHomeKit() {
+    try {
+      const status = this.cachedStatus;
+      if (!status) return;
+
+      // Door state
+      const doorState = status.state?.door?.state;
+      if (doorState) {
+        const stateMap = {
+          'open': hap.Characteristic.CurrentDoorState.OPEN,
+          'closed': hap.Characteristic.CurrentDoorState.CLOSED,
+          'opening': hap.Characteristic.CurrentDoorState.OPENING,
+          'closing': hap.Characteristic.CurrentDoorState.CLOSING,
+          'stopping': hap.Characteristic.CurrentDoorState.STOPPED
+        };
+        const currentState = stateMap[doorState] ?? hap.Characteristic.CurrentDoorState.STOPPED;
+        this.doorService.getCharacteristic(hap.Characteristic.CurrentDoorState).updateValue(currentState);
+
+        const targetState = (doorState === 'open' || doorState === 'opening')
+          ? hap.Characteristic.TargetDoorState.OPEN
+          : hap.Characteristic.TargetDoorState.CLOSED;
+        this.doorService.getCharacteristic(hap.Characteristic.TargetDoorState).updateValue(targetState);
+
+        if (this.debug) {
+          this.log.info('[Poll] Door:', doorState, '-> HomeKit:', currentState);
+        }
       }
-      
-      const options = {
-        hostname: this.baseUrl,
-        port: 443,
-        path: `/api/v1/device/${this.deviceId}`,
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Accept': 'application/json'
-        },
-        timeout: 10000
-      };
-      
-      if (this.debug) {
-        this.log.info('[Door] GET', options.path);
-      }
-      
-      const req = https.request(options, (res) => {
-        let data = '';
-        
-        res.on('data', (chunk) => {
-          data += chunk;
-        });
-        
-        res.on('end', () => {
+
+      // Light state
+      if (this.enableLight && this.lightService) {
+        const lightState = status.state?.light?.state;
+        if (lightState !== undefined) {
+          const isOn = (lightState === 'on' || lightState === 'onpending');
+          this.lightService.getCharacteristic(hap.Characteristic.On).updateValue(isOn);
           if (this.debug) {
-            this.log.info('[Door] Response status:', res.statusCode);
+            this.log.info('[Poll] Light:', lightState, '-> isOn:', isOn);
           }
-          
-          if (res.statusCode === 200) {
-            try {
-              const json = JSON.parse(data);
-              resolve(json);
-            } catch (error) {
-              this.log.error('[Door] Failed to parse JSON:', error.message);
-              this.log.error('[Door] Response was:', data);
-              reject(new Error('Failed to parse JSON response'));
-            }
-          } else {
-            if (this.debug || res.statusCode === 401 || res.statusCode === 403) {
-              this.log.error('[Door] HTTP Error', res.statusCode);
-              this.log.error('[Door] Response:', data);
-            }
-            const error = new Error(`HTTP ${res.statusCode}`);
-            error.statusCode = res.statusCode;
-            error.response = data;
-            reject(error);
+        }
+      }
+
+      // Battery state
+      if (this.enableBattery && this.batteryService) {
+        const batteryLevel = status.state?.general?.batteryLevel;
+        if (batteryLevel !== undefined && batteryLevel !== null) {
+          this.batteryService.getCharacteristic(hap.Characteristic.BatteryLevel).updateValue(batteryLevel);
+          this.batteryService.getCharacteristic(hap.Characteristic.ChargingState).updateValue(2); // NOT_CHARGEABLE
+          const isLow = (batteryLevel < 20) ? 1 : 0;
+          this.batteryService.getCharacteristic(hap.Characteristic.StatusLowBattery).updateValue(isLow);
+          if (this.debug) {
+            this.log.info('[Poll] Battery:', batteryLevel + '%, low:', isLow);
           }
-        });
-      });
-      
-      req.on('timeout', () => {
-        req.destroy();
-        this.log.error('[Door] Request timeout after 10 seconds');
-        reject(new Error('Request timeout'));
-      });
-      
-      req.on('error', (error) => {
-        this.log.error('[Door] Network error:', error.message);
-        reject(error);
-      });
-      
-      req.end();
-    });
+        }
+      }
+    } catch (error) {
+      if (this.debug) {
+        this.log.warn('[Poll] Failed to push state to HomeKit:', error.message);
+      }
+    }
   }
-  
+
   startPolling() {
-    // Do an immediate first poll
+    // Immediate first poll
     (async () => {
       try {
-        const status = await this.getDeviceStatus('Info');
-        
-        // Update accessory information with real serial number and firmware (first time only)
-        if (!this.accessoryInfoUpdated) {
-          const deviceSerial = status.deviceSerial || this.deviceId;
-          const firmware = status.state?.general?.firmwareVersionCurrent || '0.0.0';
-          
-          this.accessory.getService(hap.Service.AccessoryInformation)
-            .setCharacteristic(hap.Characteristic.SerialNumber, deviceSerial)
-            .setCharacteristic(hap.Characteristic.FirmwareRevision, firmware);
-          
-          if (this.debug) {
-            this.log.info('[Info] Updated accessory info: Serial=' + deviceSerial + ', Firmware=' + firmware);
-          }
-          
-          this.accessoryInfoUpdated = true;
-        }
+        await this.pollDeviceState();
+        this.pushStateToHomeKit();
       } catch (error) {
-        this.log.error('First poll failed, will retry on next interval');
+        this.log.error('[Poll] First poll failed, will retry on next interval');
       }
     })();
-    
+
     setInterval(async () => {
       try {
-        // Poll door state
-        const currentState = await this.getCurrentDoorState();
-        this.doorService
-          .getCharacteristic(hap.Characteristic.CurrentDoorState)
-          .updateValue(currentState);
-          
-        const targetState = await this.getTargetDoorState();
-        this.doorService
-          .getCharacteristic(hap.Characteristic.TargetDoorState)
-          .updateValue(targetState);
-        
-        // Poll light state (only if enabled)
-        if (this.enableLight && this.lightService) {
-          const isOn = await this.getLightOn();
-          this.lightService
-            .getCharacteristic(hap.Characteristic.On)
-            .updateValue(isOn);
-        }
-        
-        // Poll battery state (only if enabled)
-        if (this.enableBattery && this.batteryService) {
-          const batteryLevel = await this.getBatteryLevel();
-          this.batteryService
-            .getCharacteristic(hap.Characteristic.BatteryLevel)
-            .updateValue(batteryLevel);
-          
-          const chargingState = await this.getChargingState();
-          this.batteryService
-            .getCharacteristic(hap.Characteristic.ChargingState)
-            .updateValue(chargingState);
-          
-          const statusLowBattery = await this.getStatusLowBattery();
-          this.batteryService
-            .getCharacteristic(hap.Characteristic.StatusLowBattery)
-            .updateValue(statusLowBattery);
-        }
-          
+        await this.pollDeviceState();
+        this.pushStateToHomeKit();
       } catch (error) {
-        // Individual getter methods already log their specific errors
-        // This catches any unexpected errors (like updateValue failures)
         if (this.debug) {
-          this.log.warn('[Poll] Unexpected error in poll cycle:', error.message);
+          this.log.warn('[Poll] Poll cycle failed:', error.message);
         }
       }
     }, this.pollInterval);
-    
-    const services = [];
-    if (true) services.push('door'); // Door always enabled
+
+    const services = ['door'];
     if (this.enableLight) services.push('light');
     if (this.enableBattery) services.push('battery');
-    this.log.info(`Polling started for ${services.join(', ')}: every ${this.pollInterval / 1000} seconds`);
+    if (this.debug) {
+      this.log.info(`Polling started for ${services.join(', ')}: every ${this.pollInterval / 1000} seconds`);
+    }
   }
 }
