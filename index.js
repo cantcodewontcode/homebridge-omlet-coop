@@ -14,7 +14,6 @@ class OmletCoopPlatform {
     this.config = config;
     this.api = api;
     
-    // Configuration with validation
     this.email = this.validateEmail(config.email);
     this.password = config.password;
     this.countryCode = this.validateCountryCode(config.countryCode);
@@ -22,15 +21,14 @@ class OmletCoopPlatform {
     this.deviceId = this.validateDeviceId(config.deviceId, 'deviceId');
     this.baseUrl = this.validateHostname(config.apiServer) || 'x107.omlet.co.uk';
     this.pollInterval = this.validatePollInterval(config.pollInterval);
-    this.enableLight = config.enableLight !== false; // Default true for backwards compatibility
-    this.enableBattery = config.enableBattery === true; // Default false (not visible in Home app)
+    this.enableLight = config.enableLight !== false; // default true for backwards compatibility
+    this.enableBattery = config.enableBattery === true; // default false (not visible in Apple Home)
     this.debug = config.debug || false;
     
-    // Token management
     this.currentToken = null;
     this.storage = this.api.user.storagePath() + '/omlet-coop-tokens.json';
-    this.authFailedPermanently = false; // Set to true after 3 re-login attempts fail
-    this.reloginAttempts = 0; // Track number of re-login attempts
+    this.authFailedPermanently = false;
+    this.reloginAttempts = 0;
     this.maxReloginAttempts = 3;
     
     this.accessories = [];
@@ -40,7 +38,6 @@ class OmletCoopPlatform {
       this.log.info('Debug mode enabled');
     }
     
-    // Validate config
     const hasEmailPassword = this.email && this.password;
     const hasManualToken = this.bearerToken && this.deviceId;
     
@@ -50,14 +47,12 @@ class OmletCoopPlatform {
     }
     
     this.api.on('didFinishLaunching', async () => {
-      // Load stored credentials (token/deviceId) if available
       await this.loadStoredCredentials();
-      
       await this.initialize();
     });
   }
   
-  // === VALIDATION METHODS ===
+  // input validation
   
   validatePollInterval(value) {
     // Convert to integer, handling strings and other types
@@ -104,7 +99,7 @@ class OmletCoopPlatform {
   
   validateCountryCode(code) {
     if (!code) {
-      return 'US'; // Default
+      return 'US';
     }
     
     // Must be exactly 2 uppercase letters
@@ -123,11 +118,11 @@ class OmletCoopPlatform {
       return undefined;
     }
     
-    // Must be alphanumeric, max 64 characters
-    const tokenRegex = /^[a-zA-Z0-9]{1,64}$/;
+    // Must be alphanumeric, max 128 characters
+    const tokenRegex = /^[a-zA-Z0-9]{1,128}$/;
     
     if (!tokenRegex.test(token)) {
-      this.log.error(`Invalid ${fieldName}: must be alphanumeric and less than 64 characters`);
+      this.log.error(`Invalid ${fieldName}: must be alphanumeric and less than 128 characters`);
       return undefined;
     }
     
@@ -166,16 +161,14 @@ class OmletCoopPlatform {
     return hostname;
   }
   
-  // === STORAGE METHODS ===
+  // credential storage
   
   async loadStoredCredentials() {
     try {
       if (fs.existsSync(this.storage)) {
         const data = JSON.parse(fs.readFileSync(this.storage, 'utf8'));
         
-        // ALWAYS prefer stored credentials over config (storage is more up-to-date)
-        // Storage gets updated on auto-login and token refresh
-        // Note: We still validate stored credentials for safety, but accept them if valid
+        // stored credentials take priority over config since they're more recent
         if (data.bearerToken) {
           const validToken = this.validateToken(data.bearerToken, 'stored bearerToken');
           if (validToken) {
@@ -218,14 +211,12 @@ class OmletCoopPlatform {
   
   async initialize() {
     try {
-      // Check if using manual token mode (token required, deviceId optional)
       if (this.bearerToken) {
         this.log.info('Using configured API token');
         this.currentToken = this.bearerToken;
         
-        // Auto-discover device if not provided
         if (!this.deviceId) {
-          this.log.warn('Discovering device ID');
+          this.log.info('Discovering device ID');
           await this.autoDiscoverDevice();
           
           if (!this.deviceId) {
@@ -234,12 +225,10 @@ class OmletCoopPlatform {
           }
         }
         
-        // Create accessories
         await this.discoverDevices();
         return;
       }
       
-      // Auto-login mode (requires email + password)
       if (!this.email || !this.password) {
         this.log.error('Enter email address & password to configure plugin');
         return;
@@ -248,9 +237,8 @@ class OmletCoopPlatform {
       this.log.info('Logging into Omlet API');
       await this.login();
       
-      // Auto-discover device if not provided
       if (!this.deviceId) {
-        this.log.warn('Discovering device ID');
+        this.log.info('Discovering device ID');
         await this.autoDiscoverDevice();
       }
       
@@ -259,7 +247,6 @@ class OmletCoopPlatform {
         return;
       }
       
-      // Discover accessories
       await this.discoverDevices();
       
     } catch (error) {
@@ -272,9 +259,7 @@ class OmletCoopPlatform {
       const apiKey = await this.performLogin();
       
       this.currentToken = apiKey;
-      this.bearerToken = apiKey; // Update the config value too
-      
-      // Save the token to storage
+      this.bearerToken = apiKey; // keep in sync with stored value
       await this.saveStoredCredentials();
       
       this.log.info('Login successful');
@@ -379,12 +364,8 @@ class OmletCoopPlatform {
       
       if (devices.length === 1) {
         this.deviceId = devices[0].deviceId;
-        
-        // Save the deviceId to storage
         await this.saveStoredCredentials();
-        
         this.log.info('✓ Auto-discovered device:', devices[0].name, '(', this.deviceId, ')');
-        this.log.info('✓ Device ID saved to storage');
       } else {
         this.log.warn('Multiple devices found on your account:');
         devices.forEach((device, index) => {
@@ -479,6 +460,13 @@ class OmletCoopPlatform {
     if (this.authFailedPermanently) {
       throw new Error('Authentication permanently failed - restart Homebridge after fixing credentials');
     }
+
+    // If using token-only mode with no credentials, can't re-login
+    if (!this.email || !this.password) {
+      this.log.error('API token expired or invalid. No email/password configured for automatic re-login. Please update your API token in the plugin settings.');
+      this.authFailedPermanently = true;
+      return false;
+    }
     
     this.reloginAttempts++;
     this.log.warn(`Authentication error detected, attempting to re-login (attempt ${this.reloginAttempts}/${this.maxReloginAttempts})...`);
@@ -496,9 +484,6 @@ class OmletCoopPlatform {
       
       if (this.reloginAttempts >= this.maxReloginAttempts) {
         this.log.error(`Re-login failed ${this.maxReloginAttempts} times. Accessory will show "No Response" until Homebridge is restarted with valid credentials.`);
-        
-        // Mark auth as permanently failed - all future operations will throw errors
-        // causing HomeKit to show "No Response"
         this.authFailedPermanently = true;
       } else {
         this.log.warn(`Will retry on next operation (${this.maxReloginAttempts - this.reloginAttempts} attempts remaining)`);
@@ -511,7 +496,6 @@ class OmletCoopPlatform {
   async discoverDevices() {
     this.log.info('Setting up Homebridge accessories...');
     
-    // Create ONE accessory with multiple services (linked services pattern)
     const uuid = this.api.hap.uuid.generate('omlet-coop-' + this.deviceId);
     const existingAccessory = this.accessories.find(accessory => accessory.UUID === uuid);
     
@@ -550,10 +534,10 @@ class OmletCoopAccessory {
     this.enableBattery = platform.enableBattery;
     this.debug = platform.debug;
     
-    this.accessoryInfoUpdated = false; // Track if we've updated serial/firmware yet
-    this.cachedStatus = null; // Single shared cache for all services
+    this.accessoryInfoUpdated = false;
+    this.cachedStatus = null;
     
-    // IMPORTANT: Remove services FIRST if disabled (before setting up anything else)
+    // services need to be removed before re-adding, otherwise stale ones persist in cache
     if (!this.enableLight) {
       const existingLight = this.accessory.getService(hap.Service.Lightbulb);
       if (existingLight) {
@@ -570,21 +554,19 @@ class OmletCoopAccessory {
       }
     }
     
-    // Set accessory information (will be updated with real serial/firmware after first poll)
+    // serial and firmware get updated after the first successful poll
     this.accessory.getService(hap.Service.AccessoryInformation)
       .setCharacteristic(hap.Characteristic.Manufacturer, 'Omlet')
       .setCharacteristic(hap.Characteristic.Model, 'Smart Autodoor')
-      .setCharacteristic(hap.Characteristic.SerialNumber, this.deviceId) // Temporary, will update with deviceSerial
-      .setCharacteristic(hap.Characteristic.FirmwareRevision, '0.0.0'); // Temporary, will update with actual firmware
+      .setCharacteristic(hap.Characteristic.SerialNumber, this.deviceId)
+      .setCharacteristic(hap.Characteristic.FirmwareRevision, '0.0.0');
     
-    // Create Door Service (PRIMARY SERVICE)
     this.doorService = this.accessory.getService(hap.Service.GarageDoorOpener) 
       || this.accessory.addService(hap.Service.GarageDoorOpener);
     
     this.doorService.setCharacteristic(hap.Characteristic.Name, 'Coop Door');
-    this.doorService.setPrimaryService(true); // Door is the primary service
+    this.doorService.setPrimaryService(true);
     
-    // Set up door characteristics
     this.doorService
       .getCharacteristic(hap.Characteristic.CurrentDoorState)
       .onGet(this.getCurrentDoorState.bind(this));
@@ -598,31 +580,27 @@ class OmletCoopAccessory {
       .getCharacteristic(hap.Characteristic.ObstructionDetected)
       .onGet(() => false);
     
-    // Create Light Service (LINKED SERVICE) - only if enabled
+    // light and battery are linked to the door as the primary service
     if (this.enableLight) {
       this.lightService = this.accessory.getService(hap.Service.Lightbulb) 
         || this.accessory.addService(hap.Service.Lightbulb);
       
       this.lightService.setCharacteristic(hap.Characteristic.Name, 'Coop Light');
       
-      // Set up light characteristics
       this.lightService
         .getCharacteristic(hap.Characteristic.On)
         .onGet(this.getLightOn.bind(this))
         .onSet(this.setLightOn.bind(this));
       
-      // Link light service TO the door service (door is primary)
       this.doorService.addLinkedService(this.lightService);
     }
     
-    // Create Battery Service (LINKED SERVICE) - only if enabled
     if (this.enableBattery) {
       this.batteryService = this.accessory.getService(hap.Service.Battery)
         || this.accessory.addService(hap.Service.Battery);
       
       this.batteryService.setCharacteristic(hap.Characteristic.Name, 'Battery');
       
-      // Set up battery characteristics (all required by HAP spec)
       this.batteryService
         .getCharacteristic(hap.Characteristic.BatteryLevel)
         .onGet(this.getBatteryLevel.bind(this));
@@ -635,21 +613,18 @@ class OmletCoopAccessory {
         .getCharacteristic(hap.Characteristic.StatusLowBattery)
         .onGet(this.getStatusLowBattery.bind(this));
       
-      // Link battery service TO the door service (door is primary)
       this.doorService.addLinkedService(this.batteryService);
     }
     
-    // Log initialization summary
     const services = ['door'];
     if (this.enableLight) services.push('light');
     if (this.enableBattery) services.push('battery');
     this.log.info(`Coop accessory initialized with ${services.join(', ')} service${services.length > 1 ? 's' : ''}`);
     
-    // Start polling
     this.startPolling();
   }
   
-  // === LIGHT METHODS ===
+  // light
   
   async getLightOn() {
     try {
@@ -671,14 +646,10 @@ class OmletCoopAccessory {
     const action = value ? 'on' : 'off';
     
     try {
-      if (this.debug) {
-        this.log.info('[Light] Turning', action === 'on' ? 'on light' : 'off light');
-      }
-      
       await this.sendAction(action, 'Light');
       this.log.info('[Light]', action === 'on' ? 'Turning on light' : 'Turning off light');
       
-      // Eager re-poll: confirm actual state after light has had time to switch
+      // re-poll after 15s to confirm the light actually switched
       setTimeout(async () => {
         try {
           await this.pollDeviceState();
@@ -693,11 +664,9 @@ class OmletCoopAccessory {
     } catch (error) {
       this.log.error('[Light] Failed to set light state:', error.message);
       
-      // Check if it's an auth error
       if (error.statusCode === 401 || error.statusCode === 403) {
         const refreshed = await this.platform.handleAuthError();
         if (refreshed) {
-          // Retry once with new token
           try {
             await this.sendAction(action, 'Light');
             this.log.info('[Light]', action === 'on' ? 'Turning on light' : 'Turning off light', '(after token refresh)');
@@ -712,7 +681,7 @@ class OmletCoopAccessory {
     }
   }
   
-  // === BATTERY METHODS ===
+  // battery
   
   async getBatteryLevel() {
     try {
@@ -730,14 +699,9 @@ class OmletCoopAccessory {
     }
   }
   
-  async getChargingState() {
-    try {
-      // Omlet coops use AA batteries (not rechargeable), always return NOT_CHARGEABLE
-      return 2;
-    } catch (error) {
-      this.log.error('[Battery] Failed to get charging state:', error.message);
-      throw new Error('Failed to get charging state');
-    }
+  getChargingState() {
+    // Omlet autodoor uses AA batteries - not rechargeable, always NOT_CHARGEABLE
+    return 2;
   }
   
   async getStatusLowBattery() {
@@ -850,7 +814,8 @@ class OmletCoopAccessory {
       
       if (this.debug) {
         this.log.info(`[${context}] GET`, options.path);
-      }      
+      }
+
       const req = https.request(options, (res) => {
         let data = '';
         
@@ -903,7 +868,7 @@ class OmletCoopAccessory {
     });
   }
   
-  // === DOOR METHODS ===
+  // door
   
   async getCurrentDoorState() {
     try {
@@ -948,10 +913,6 @@ class OmletCoopAccessory {
     const action = (value === hap.Characteristic.TargetDoorState.OPEN) ? 'open' : 'close';
     
     try {
-      if (this.debug) {
-        this.log.info('[Door]', action === 'open' ? 'Opening door' : 'Closing door');
-      }
-      
       await this.sendAction(action, 'Door');
       this.log.info('[Door]', action === 'open' ? 'Opening door' : 'Closing door');
       
@@ -963,7 +924,7 @@ class OmletCoopAccessory {
         .getCharacteristic(hap.Characteristic.CurrentDoorState)
         .updateValue(newCurrentState);
       
-      // Eager re-poll: confirm actual state after door has had time to move
+      // re-poll after 15s to confirm the door actually moved
       setTimeout(async () => {
         try {
           await this.pollDeviceState();
@@ -978,11 +939,9 @@ class OmletCoopAccessory {
     } catch (error) {
       this.log.error('[Door] Failed to set door state:', error.message);
       
-      // Check if it's an auth error
       if (error.statusCode === 401 || error.statusCode === 403) {
         const refreshed = await this.platform.handleAuthError();
         if (refreshed) {
-          // Retry once with new token
           try {
             await this.sendAction(action, 'Door');
             this.log.info('[Door]', action === 'open' ? 'Opening door' : 'Closing door', '(after token refresh)');
@@ -1006,14 +965,14 @@ class OmletCoopAccessory {
     }
   }
   
-  // === POLL & CACHE METHODS ===
-
+  // polling
+  
   async pollDeviceState() {
     try {
       const status = await this.getDeviceStatus('Poll');
       this.cachedStatus = status;
 
-      // Update accessory info on first successful poll
+      // update serial and firmware from the first real response
       if (!this.accessoryInfoUpdated) {
         const deviceSerial = status.deviceSerial || this.deviceId;
         const firmware = status.state?.general?.firmwareVersionCurrent || '0.0.0';
@@ -1100,14 +1059,18 @@ class OmletCoopAccessory {
         }
       }
     } catch (error) {
-      if (this.debug) {
-        this.log.warn('[Poll] Failed to push state to HomeKit:', error.message);
-      }
+      this.log.error('[Poll] Failed to push state to HomeKit:', error.message);
+    }
+  }
+
+  stopPolling() {
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = null;
     }
   }
 
   startPolling() {
-    // Immediate first poll
     (async () => {
       try {
         await this.pollDeviceState();
@@ -1117,7 +1080,7 @@ class OmletCoopAccessory {
       }
     })();
 
-    setInterval(async () => {
+    this.pollTimer = setInterval(async () => {
       try {
         await this.pollDeviceState();
         this.pushStateToHomeKit();
@@ -1131,8 +1094,6 @@ class OmletCoopAccessory {
     const services = ['door'];
     if (this.enableLight) services.push('light');
     if (this.enableBattery) services.push('battery');
-    if (this.debug) {
-      this.log.info(`Polling started for ${services.join(', ')}: every ${this.pollInterval / 1000} seconds`);
-    }
+    this.log.info(`Polling started for ${services.join(', ')}: every ${this.pollInterval / 1000} seconds`);
   }
 }

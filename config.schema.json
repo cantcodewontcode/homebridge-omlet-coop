@@ -45,7 +45,7 @@
         "title": "API Token",
         "type": "string",
         "required": false,
-        "description": "Provide API token instead of email address and password, if desired."
+        "description": "Provide API token instead of email address and password, if desired. Must be alphanumeric and no longer than 128 characters."
       },
       "deviceId": {
         "title": "Device ID",
@@ -60,7 +60,7 @@
         "required": false,
         "default": 30,
         "minimum": 30,
-        "description": "How often to check device status (minimum 30 seconds)"
+        "description": "How often to check device status (30-300 seconds)"
       },
       "debug": {
         "title": "Debug Mode",

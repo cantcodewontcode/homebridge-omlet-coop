@@ -105,7 +105,6 @@ class OmletPluginUiServer extends HomebridgePluginUiServer {
         }
       };
       
-      // LOG REQUEST (only if debug enabled)
       if (debug) {
         console.log('=== OMLET LOGIN REQUEST ===');
         console.log('URL:', `https://${options.hostname}${options.path}`);
@@ -118,20 +117,11 @@ class OmletPluginUiServer extends HomebridgePluginUiServer {
       const req = https.request(options, (res) => {
         let data = '';
         
-        // LOG RESPONSE HEADERS (only if debug enabled)
-        if (debug) {
-          console.log('=== OMLET LOGIN RESPONSE ===');
-          console.log('Status Code:', res.statusCode);
-          console.log('Status Message:', res.statusMessage);
-          console.log('Headers:', JSON.stringify(res.headers, null, 2));
-        }
-        
         res.on('data', (chunk) => {
           data += chunk;
         });
         
         res.on('end', () => {
-          // LOG RESPONSE BODY (only if debug enabled)
           if (debug) {
             console.log('Response Body:', data);
             console.log('Body Length:', data.length, 'bytes');
@@ -209,7 +199,6 @@ class OmletPluginUiServer extends HomebridgePluginUiServer {
         }
       };
       
-      // LOG REQUEST (only if debug enabled)
       if (debug) {
         console.log('=== OMLET DISCOVERY REQUEST ===');
         console.log('URL:', `https://${options.hostname}${options.path}`);
@@ -224,20 +213,11 @@ class OmletPluginUiServer extends HomebridgePluginUiServer {
       const req = https.request(options, (res) => {
         let data = '';
         
-        // LOG RESPONSE HEADERS (only if debug enabled)
-        if (debug) {
-          console.log('=== OMLET DISCOVERY RESPONSE ===');
-          console.log('Status Code:', res.statusCode);
-          console.log('Status Message:', res.statusMessage);
-          console.log('Headers:', JSON.stringify(res.headers, null, 2));
-        }
-        
         res.on('data', (chunk) => {
           data += chunk;
         });
         
         res.on('end', () => {
-          // LOG RESPONSE BODY (only if debug enabled)
           if (debug) {
             console.log('Response Body:', data);
             console.log('Body Length:', data.length, 'bytes');
