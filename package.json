@@ -1,7 +1,7 @@
 {
   "name": "homebridge-omlet",
   "displayName": "Omlet Coop",
-  "version": "0.9.5",
+  "version": "0.9.6",
   "description": "The Homebridge Omlet Coop plugin allows for easy control of the Omlet Smart Automatic Chicken Coop Door through HomeKit. Control both the coop door and light with this plugin.",
   "main": "index.js",
   "scripts": {
