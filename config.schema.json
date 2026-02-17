@@ -75,6 +75,13 @@
         "required": false,
         "default": true,
         "description": "Enable control of the Omlet Coop Light (only check if you have the light module installed)"
+      },
+      "enableBattery": {
+        "title": "Enable Battery Status",
+        "type": "boolean",
+        "required": false,
+        "default": false,
+        "description": "Show battery level in Homebridge and third-party HomeKit apps (not visible in Apple Home app)"
       }
     }
   },
@@ -94,6 +101,7 @@
         "deviceId",
         "pollInterval",
         "enableLight",
+        "enableBattery",
         "debug"
       ]
     }

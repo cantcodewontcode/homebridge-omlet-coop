@@ -116,6 +116,15 @@
     margin-top: 2px;
     line-height: 1.3;
   }
+  .field-error {
+    color: #dc3545;
+    font-size: 12px;
+    margin-top: 4px;
+    display: none;
+  }
+  .field-error.show {
+    display: block;
+  }
 </style>
 
 <div class="card">
@@ -127,7 +136,8 @@
   <div id="loginForm">
     <div class="form-group">
       <label for="email">Email Address</label>
-      <input type="email" class="form-control" id="email" placeholder="your@email.com">
+      <input type="email" class="form-control" id="email" placeholder="your@email.com" pattern="[^\s@]+@[^\s@]+\.[^\s@]+">
+      <div class="field-error" id="emailError"></div>
     </div>
     
     <div class="form-group">
@@ -176,26 +186,37 @@
     <div id="advancedSection" class="hidden" style="padding: 15px; background: #f8f9fa; border-radius: 6px; margin-bottom: 15px;">
       <div class="form-group">
         <label for="apiServer">API Server</label>
-        <input type="text" class="form-control" id="apiServer" placeholder="x107.omlet.co.uk">
+        <input type="text" class="form-control" id="apiServer" placeholder="x107.omlet.co.uk" pattern="[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*">
         <small style="color: #6c757d;">Default: x107.omlet.co.uk</small>
+        <div class="field-error" id="apiServerError"></div>
       </div>
       
       <div class="form-group">
         <label for="manualToken">API Token</label>
-        <input type="text" class="form-control" id="manualToken" placeholder="optional, will be auto-discovered">
+        <input type="text" class="form-control" id="manualToken" placeholder="optional, will be auto-discovered" pattern="[a-zA-Z0-9]{1,64}">
         <small style="color: #6c757d;">Provide API token instead of email address and password, if desired.</small>
+        <div class="field-error" id="manualTokenError"></div>
       </div>
       
       <div class="form-group">
         <label for="manualDeviceId">Device ID</label>
-        <input type="text" class="form-control" id="manualDeviceId" placeholder="optional, will be auto-discovered">
+        <input type="text" class="form-control" id="manualDeviceId" placeholder="optional, will be auto-discovered" pattern="[a-zA-Z0-9]{1,32}">
         <small style="color: #6c757d;">Provide Device ID to skip coop door auto-discovery, or to specify a coop door if you have multiple doors.</small>
+        <div class="field-error" id="manualDeviceIdError"></div>
       </div>
       
       <div class="form-group">
         <label for="pollInterval">Poll Interval (seconds)</label>
-        <input type="number" class="form-control" id="pollInterval" placeholder="30" min="30">
-        <small style="color: #6c757d;">How often to check device status (minimum 30 seconds)</small>
+        <input type="number" class="form-control" id="pollInterval" placeholder="30" min="30" max="300" step="1">
+        <small style="color: #6c757d;">How often to check device status (30-300 seconds)</small>
+        <div class="field-error" id="pollIntervalError"></div>
+      </div>
+      
+      <div class="form-group">
+        <label>
+          <input type="checkbox" id="enableBattery"> Enable Battery Status
+        </label>
+        <small style="color: #6c757d;">Show battery level in Homebridge and third-party HomeKit apps (not visible in Apple Home app)</small>
       </div>
       
       <div class="form-group">
@@ -296,23 +317,37 @@ function togglePasswordVisibility() {
   if (currentConfig.enableLight !== undefined) {
     document.getElementById('enableLight').checked = currentConfig.enableLight;
   }
+  if (currentConfig.enableBattery !== undefined) {
+    document.getElementById('enableBattery').checked = currentConfig.enableBattery;
+  }
   
   // Auto-update config when form fields change (so built-in Save button works)
   async function updateConfigFromForm() {
+    // Build config explicitly (don't spread currentConfig - causes clone errors)
     const updatedConfig = {
-      ...currentConfig,
       name: currentConfig.name || 'Omlet Coop',
       platform: 'OmletCoop',
       email: document.getElementById('email').value.trim() || undefined,
       password: document.getElementById('password').value.trim() || undefined,
       countryCode: document.getElementById('countryCode').value,
-      apiServer: document.getElementById('apiServer').value || 'x107.omlet.co.uk',
       bearerToken: document.getElementById('manualToken').value.trim() || undefined,
       deviceId: document.getElementById('manualDeviceId').value.trim() || undefined,
-      pollInterval: parseInt(document.getElementById('pollInterval').value) || 30,
       enableLight: document.getElementById('enableLight').checked,
+      enableBattery: document.getElementById('enableBattery').checked,
       debug: document.getElementById('debugMode').checked
     };
+    
+    // Only include apiServer if user explicitly set it (not empty and not default)
+    const apiServerValue = document.getElementById('apiServer').value.trim();
+    if (apiServerValue && apiServerValue !== 'x107.omlet.co.uk') {
+      updatedConfig.apiServer = apiServerValue;
+    }
+    
+    // Only include pollInterval if user explicitly set it (not empty)
+    const pollIntervalValue = document.getElementById('pollInterval').value.trim();
+    if (pollIntervalValue) {
+      updatedConfig.pollInterval = parseInt(pollIntervalValue);
+    }
     
     // Remove undefined values to keep config clean
     Object.keys(updatedConfig).forEach(key => {
@@ -333,6 +368,7 @@ function togglePasswordVisibility() {
   document.getElementById('manualDeviceId').addEventListener('change', updateConfigFromForm);
   document.getElementById('pollInterval').addEventListener('change', updateConfigFromForm);
   document.getElementById('enableLight').addEventListener('change', updateConfigFromForm);
+  document.getElementById('enableBattery').addEventListener('change', updateConfigFromForm);
   document.getElementById('debugMode').addEventListener('change', updateConfigFromForm);
   
   // Show status message
@@ -348,6 +384,203 @@ function togglePasswordVisibility() {
     document.getElementById('statusMessage').classList.add('hidden');
   }
   
+  // Client-side validation helper
+  function validateInputs(email, apiServer, pollInterval) {
+    let isValid = true;
+    
+    // Email validation (if provided)
+    if (email) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        showStatus('Please enter a valid email address', 'error');
+        isValid = false;
+      }
+    }
+    
+    // API Server validation (if provided)
+    if (apiServer && apiServer !== 'x107.omlet.co.uk') {
+      const hostnameRegex = /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
+      if (!hostnameRegex.test(apiServer)) {
+        showStatus('Please enter a valid hostname for API Server', 'error');
+        isValid = false;
+      }
+    }
+    
+    // Poll Interval validation (if provided)
+    if (pollInterval) {
+      const interval = parseInt(pollInterval);
+      if (isNaN(interval)) {
+        showStatus('Poll interval must be a number', 'error');
+        isValid = false;
+      } else if (interval < 30 || interval > 300) {
+        showStatus('Poll interval must be between 30 and 300 seconds', 'error');
+        isValid = false;
+      }
+    }
+    
+    return isValid;
+  }
+  
+  // Real-time field validation
+  function validateField(fieldId) {
+    const field = document.getElementById(fieldId);
+    const errorDiv = document.getElementById(fieldId + 'Error');
+    const value = field.value.trim();
+    
+    // Clear any existing error styling
+    field.style.borderColor = '';
+    errorDiv.classList.remove('show');
+    errorDiv.textContent = '';
+    
+    if (!value) {
+      // Empty is OK for optional fields
+      updateButtonStates();
+      return true;
+    }
+    
+    let isValid = true;
+    let errorMsg = '';
+    
+    switch(fieldId) {
+      case 'email':
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        isValid = emailRegex.test(value);
+        errorMsg = 'Invalid email address format';
+        break;
+        
+      case 'apiServer':
+        if (value === 'x107.omlet.co.uk') {
+          // Default is always valid
+          isValid = true;
+        } else {
+          const hostnameRegex = /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
+          isValid = hostnameRegex.test(value);
+          errorMsg = 'Invalid hostname format';
+        }
+        break;
+        
+      case 'manualToken':
+        const tokenRegex = /^[a-zA-Z0-9]{1,64}$/;
+        isValid = tokenRegex.test(value);
+        if (value.length > 64) {
+          errorMsg = 'Token must be 64 characters or less';
+        } else if (!/^[a-zA-Z0-9]+$/.test(value)) {
+          errorMsg = 'Token must be alphanumeric only';
+        } else {
+          errorMsg = 'Invalid token format';
+        }
+        break;
+        
+      case 'manualDeviceId':
+        const deviceIdRegex = /^[a-zA-Z0-9]{1,32}$/;
+        isValid = deviceIdRegex.test(value);
+        if (value.length > 32) {
+          errorMsg = 'Device ID must be 32 characters or less';
+        } else if (!/^[a-zA-Z0-9]+$/.test(value)) {
+          errorMsg = 'Device ID must be alphanumeric only';
+        } else {
+          errorMsg = 'Invalid device ID format';
+        }
+        break;
+        
+      case 'pollInterval':
+        const interval = parseInt(value);
+        if (isNaN(interval)) {
+          isValid = false;
+          errorMsg = 'Must be a number';
+        } else if (interval < 30 || interval > 300) {
+          isValid = false;
+          errorMsg = 'Must be between 30-300 seconds';
+        }
+        break;
+    }
+    
+    if (!isValid) {
+      field.style.borderColor = '#dc3545';
+      errorDiv.textContent = errorMsg;
+      errorDiv.classList.add('show');
+    } else {
+      field.style.borderColor = '#28a745';
+    }
+    
+    updateButtonStates();
+    return isValid;
+  }
+  
+  // Update Login and Save button states based on validation
+  function updateButtonStates() {
+    // Don't disable the button - we'll check validation on click instead
+    // Just keep track of validation state for when Login is clicked
+  }
+  
+  // Add blur event listeners for real-time validation
+  document.getElementById('email').addEventListener('blur', () => validateField('email'));
+  document.getElementById('apiServer').addEventListener('blur', () => validateField('apiServer'));
+  document.getElementById('manualToken').addEventListener('blur', () => validateField('manualToken'));
+  document.getElementById('manualDeviceId').addEventListener('blur', () => validateField('manualDeviceId'));
+  document.getElementById('pollInterval').addEventListener('blur', () => validateField('pollInterval'));
+  
+  // Also validate on input (as user types) for immediate feedback
+  document.getElementById('email').addEventListener('input', () => {
+    const field = document.getElementById('email');
+    const errorDiv = document.getElementById('emailError');
+    if (field.value.trim()) {
+      setTimeout(() => validateField('email'), 500); // Debounce 500ms
+    } else {
+      field.style.borderColor = '';
+      errorDiv.classList.remove('show');
+      updateButtonStates();
+    }
+  });
+  
+  document.getElementById('apiServer').addEventListener('input', () => {
+    const field = document.getElementById('apiServer');
+    const errorDiv = document.getElementById('apiServerError');
+    if (field.value.trim()) {
+      setTimeout(() => validateField('apiServer'), 500);
+    } else {
+      field.style.borderColor = '';
+      errorDiv.classList.remove('show');
+      updateButtonStates();
+    }
+  });
+  
+  document.getElementById('manualToken').addEventListener('input', () => {
+    const field = document.getElementById('manualToken');
+    const errorDiv = document.getElementById('manualTokenError');
+    if (field.value.trim()) {
+      setTimeout(() => validateField('manualToken'), 500);
+    } else {
+      field.style.borderColor = '';
+      errorDiv.classList.remove('show');
+      updateButtonStates();
+    }
+  });
+  
+  document.getElementById('manualDeviceId').addEventListener('input', () => {
+    const field = document.getElementById('manualDeviceId');
+    const errorDiv = document.getElementById('manualDeviceIdError');
+    if (field.value.trim()) {
+      setTimeout(() => validateField('manualDeviceId'), 500);
+    } else {
+      field.style.borderColor = '';
+      errorDiv.classList.remove('show');
+      updateButtonStates();
+    }
+  });
+  
+  document.getElementById('pollInterval').addEventListener('input', () => {
+    const field = document.getElementById('pollInterval');
+    const errorDiv = document.getElementById('pollIntervalError');
+    if (field.value.trim()) {
+      setTimeout(() => validateField('pollInterval'), 500);
+    } else {
+      field.style.borderColor = '';
+      errorDiv.classList.remove('show');
+      updateButtonStates();
+    }
+  });
+  
   // Handle login and discovery with smart credential validation
   document.getElementById('loginButton').addEventListener('click', async () => {
     const email = document.getElementById('email').value.trim();
@@ -359,8 +592,17 @@ function togglePasswordVisibility() {
     const pollInterval = parseInt(document.getElementById('pollInterval').value) || 30;
     const debugMode = document.getElementById('debugMode').checked;
     const enableLight = document.getElementById('enableLight').checked;
+    const enableBattery = document.getElementById('enableBattery').checked;
     
     const loginButton = document.getElementById('loginButton');
+    
+    // Check if there are any validation errors showing
+    const hasErrors = document.querySelector('.field-error.show') !== null;
+    if (hasErrors) {
+      showStatus('Please correct errors below before login.', 'error');
+      return;
+    }
+    
     loginButton.disabled = true;
     hideStatus();
     
@@ -577,18 +819,46 @@ function togglePasswordVisibility() {
       }
       
       // Save configuration
+      // Build config explicitly (don't spread currentConfig - causes clone errors)
       const newConfig = {
-        ...currentConfig,
         name: currentConfig.name || 'Omlet Coop',
         platform: 'OmletCoop',
         countryCode: countryCode,
-        apiServer: apiServer,
-        bearerToken: finalToken,
-        deviceId: finalDeviceId,
-        pollInterval: pollInterval,
         enableLight: enableLight,
+        enableBattery: enableBattery,
         debug: debugMode
       };
+      
+      // Only include apiServer if user explicitly set it (not empty and not default)
+      if (apiServer && apiServer !== 'x107.omlet.co.uk') {
+        newConfig.apiServer = apiServer;
+      }
+      
+      // Only include pollInterval if user explicitly set it (not empty/blank)
+      if (pollInterval && pollInterval !== 30) {
+        newConfig.pollInterval = pollInterval;
+      }
+      
+      // CRITICAL: Only save token/deviceId to config if user MANUALLY entered them
+      // Auto-discovered credentials are saved to storage by the plugin, not config
+      
+      // Save token to config ONLY if user manually provided it (not auto-discovered)
+      if (hasToken && finalToken === manualToken) {
+        // User manually entered this token → save to config
+        newConfig.bearerToken = finalToken;
+      } else {
+        // Token was auto-discovered via email/password → don't save to config (goes to storage)
+        delete newConfig.bearerToken;
+      }
+      
+      // Save deviceId to config ONLY if user manually provided it (not auto-discovered)
+      if (hasDeviceId && finalDeviceId === manualDeviceId) {
+        // User manually entered this deviceId → save to config
+        newConfig.deviceId = finalDeviceId;
+      } else {
+        // DeviceId was auto-discovered → don't save to config (goes to storage)
+        delete newConfig.deviceId;
+      }
       
       // Only save credentials if appropriate
       if (shouldSaveCredentials) {
@@ -600,11 +870,20 @@ function togglePasswordVisibility() {
         delete newConfig.password;
       }
       
-      await homebridge.updatePluginConfig([newConfig]);
+      // Debug: Log what we're about to save
+      console.log('Saving config:', JSON.stringify(newConfig, null, 2));
       
-      showStatus('Login successful! Click "Save" to apply changes.', 'success');
-      loginButton.textContent = 'Login Successful ✓';
-      loginButton.disabled = false;
+      try {
+        // Ensure config is JSON-serializable (fixes clone errors)
+        const serializableConfig = JSON.parse(JSON.stringify(newConfig));
+        await homebridge.updatePluginConfig([serializableConfig]);
+        showStatus('Login successful! Click "Save" to apply changes.', 'success');
+        loginButton.textContent = 'Login Successful ✓';
+        loginButton.disabled = false;
+      } catch (configError) {
+        console.error('Config update error:', configError);
+        throw new Error('Failed to update config: ' + configError.message);
+      }
       
     } catch (error) {
       console.error('Error:', error);
