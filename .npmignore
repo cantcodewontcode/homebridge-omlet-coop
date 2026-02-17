@@ -1,0 +1,28 @@
+# macOS junk files
+._*
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Git
+.git
+.gitignore
+
+# Development / IDE
+.vscode/
+.idea/
+
+# Test config
+test/
+
+# Build artifacts
+dist/
+build/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Backup files
+*.bak
+*~
