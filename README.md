@@ -17,8 +17,8 @@ This Homebridge plugin allows you to control your Omlet coop door and coop light
 - Omlet Smart Automatic Chicken Coop Door
 - Omlet Wi-Fi Module
 - Omlet Coop Light (optional, for light integration)
-- Homebridge v1.6.0 or later
-- Node.js v18.0.0 or later
+- Homebridge v1.6.0 or later (Homebridge 2.0 compatible)
+- Node.js v20.0.0 or later
 
 ## Installation
 

@@ -24,10 +24,10 @@
   },
   "homepage": "https://github.com/cantcodewontcode/homebridge-omlet-coop#readme",
   "engines": {
-    "node": ">=18.0.0",
-    "homebridge": ">=1.6.0"
+    "node": ">=20.0.0",
+    "homebridge": ">=1.6.0 || >=2.0.0"
   },
-  "author": "Bill Spry",
+  "author": "cantcodewontcode",
   "license": "Apache-2.0",
   "private": false,
   "dependencies": {
