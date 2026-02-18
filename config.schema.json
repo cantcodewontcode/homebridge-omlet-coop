@@ -5,31 +5,28 @@
   "customUi": true,
   "schema": {
     "type": "object",
+    "required": ["name", "countryCode"],
     "properties": {
       "name": {
         "title": "Name",
         "type": "string",
-        "required": true,
         "default": "Omlet Coop",
         "description": "Name for this plugin instance"
       },
       "email": {
         "title": "Email Address",
         "type": "string",
-        "required": false,
         "format": "email",
         "description": "Your Omlet account email address"
       },
       "password": {
         "title": "Password",
         "type": "string",
-        "required": false,
         "description": "Your Omlet account password"
       },
       "countryCode": {
         "title": "Country Code",
         "type": "string",
-        "required": true,
         "default": "US",
         "enum": ["AU", "DE", "DK", "FR", "IE", "IT", "NL", "SE", "UK", "US"],
         "description": "Your country"
@@ -37,27 +34,23 @@
       "apiServer": {
         "title": "API Server",
         "type": "string",
-        "required": false,
         "default": "x107.omlet.co.uk",
         "description": "Omlet API server hostname (default is x107.omlet.co.uk)"
       },
       "bearerToken": {
         "title": "API Token",
         "type": "string",
-        "required": false,
         "description": "Provide API token instead of email address and password, if desired. Must be alphanumeric and no longer than 128 characters."
       },
       "deviceId": {
         "title": "Device ID",
         "type": "string",
-        "required": false,
         "placeholder": "optional, will be auto-discovered",
         "description": "Provide Device ID to skip coop door auto-discovery, or to specify a coop door if you have multiple doors."
       },
       "pollInterval": {
         "title": "Poll Interval (seconds)",
         "type": "integer",
-        "required": false,
         "default": 30,
         "minimum": 30,
         "description": "How often to check device status (30-300 seconds)"
@@ -65,21 +58,18 @@
       "debug": {
         "title": "Debug Mode",
         "type": "boolean",
-        "required": false,
         "default": false,
         "description": "Enable detailed logging for troubleshooting"
       },
       "enableLight": {
         "title": "Enable Coop Light Accessory",
         "type": "boolean",
-        "required": false,
         "default": true,
         "description": "Enable control of the Omlet Coop Light (only check if you have the light module installed)"
       },
       "enableBattery": {
         "title": "Enable Battery Status",
         "type": "boolean",
-        "required": false,
         "default": false,
         "description": "Show battery level in Homebridge and third-party HomeKit apps (not visible in Apple Home app)"
       }
