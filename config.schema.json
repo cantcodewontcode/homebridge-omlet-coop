@@ -37,6 +37,11 @@
         "default": "x107.omlet.co.uk",
         "description": "Omlet API server hostname (default is x107.omlet.co.uk)"
       },
+      "apiKey": {
+        "title": "Developer API Key",
+        "type": "string",
+        "description": "Optional. An API key generated in the Omlet developer console at smart.omlet.com/developers. If set, it is used instead of logging in with your email address and password. Letters, digits, underscores and hyphens, no longer than 128 characters."
+      },
       "bearerToken": {
         "title": "API Token",
         "type": "string",
@@ -87,6 +92,7 @@
       "expanded": false,
       "items": [
         "apiServer",
+        "apiKey",
         "bearerToken",
         "deviceId",
         "pollInterval",

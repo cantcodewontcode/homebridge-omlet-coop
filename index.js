@@ -18,6 +18,7 @@ class OmletCoopPlatform {
     this.password = config.password;
     this.countryCode = this.validateCountryCode(config.countryCode);
     this.bearerToken = this.validateToken(config.bearerToken, 'bearerToken');
+    this.apiKey = this.validateApiKey(config.apiKey);
     this.deviceId = this.validateDeviceId(config.deviceId, 'deviceId');
     this.baseUrl = this.validateHostname(config.apiServer) || 'x107.omlet.co.uk';
     this.pollInterval = this.validatePollInterval(config.pollInterval);
@@ -26,6 +27,7 @@ class OmletCoopPlatform {
     this.debug = config.debug || false;
     
     this.currentToken = null;
+    this.authMode = null;
     this.storage = this.api.user.storagePath() + '/omlet-coop-tokens.json';
     this.authFailedPermanently = false;
     this.reloginAttempts = 0;
@@ -36,14 +38,6 @@ class OmletCoopPlatform {
     this.log.info('Omlet Coop platform loaded');
     if (this.debug) {
       this.log.info('Debug mode enabled');
-    }
-    
-    const hasEmailPassword = this.email && this.password;
-    const hasManualToken = this.bearerToken && this.deviceId;
-    
-    if (!hasEmailPassword && !hasManualToken) {
-      this.log.error('Enter email address & password to configure plugin');
-      return;
     }
     
     this.api.on('didFinishLaunching', async () => {
@@ -129,6 +123,24 @@ class OmletCoopPlatform {
     return token;
   }
   
+  validateApiKey(key) {
+    if (!key) {
+      return undefined;
+    }
+    
+    // Developer console keys are not strictly alphanumeric - published examples
+    // contain underscores. Kept separate from validateToken() so the rules for
+    // login-issued tokens stay unchanged.
+    const keyRegex = /^[A-Za-z0-9_\-]{1,128}$/;
+    
+    if (!keyRegex.test(key)) {
+      this.log.error('Invalid apiKey: must be 1-128 characters, letters, digits, underscore or hyphen');
+      return undefined;
+    }
+    
+    return key;
+  }
+  
   validateDeviceId(deviceId, fieldName = 'deviceId') {
     if (!deviceId) {
       return undefined;
@@ -209,33 +221,82 @@ class OmletCoopPlatform {
     }
   }
   
+  // Removes a saved password from config.json once we hold a working token.
+  // API keys and bearer tokens are deliberately left untouched - only the password
+  // goes, because it is the one credential we no longer need to keep.
+  scrubConfigPassword() {
+    let configPath;
+    
+    try {
+      configPath = this.api.user.configPath();
+    } catch (error) {
+      return;
+    }
+    
+    try {
+      if (!configPath || !fs.existsSync(configPath)) {
+        return;
+      }
+      
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      
+      if (!Array.isArray(config.platforms)) {
+        return;
+      }
+      
+      let changed = false;
+      
+      config.platforms.forEach((block) => {
+        if (block && block.platform === 'OmletCoop' && block.password !== undefined) {
+          delete block.password;
+          changed = true;
+        }
+      });
+      
+      if (!changed) {
+        return;
+      }
+      
+      // Write via a temp file so an interrupted write cannot truncate config.json
+      const tmpPath = configPath + '.omlet-tmp';
+      fs.writeFileSync(tmpPath, JSON.stringify(config, null, 4));
+      fs.renameSync(tmpPath, configPath);
+      
+      this.password = undefined;
+      this.log.info('Removed the saved password from config.json - the stored token is used instead');
+      
+    } catch (error) {
+      this.log.warn('Could not remove the saved password from config.json:', error.message);
+    }
+  }
+  
   async initialize() {
     try {
-      if (this.bearerToken) {
-        this.log.info('Using configured API token');
+      // Both auth paths are fully supported. A developer API key wins if present,
+      // otherwise we use a token - obtained by logging in with email and password,
+      // which remains the primary way to set the plugin up.
+      if (this.apiKey) {
+        this.log.info('Using Omlet developer API key');
+        this.authMode = 'apikey';
+        this.currentToken = this.apiKey;
+      } else if (this.bearerToken) {
+        this.log.info('Using stored API token');
+        this.authMode = 'token';
         this.currentToken = this.bearerToken;
-        
-        if (!this.deviceId) {
-          this.log.info('Discovering device ID');
-          await this.autoDiscoverDevice();
-          
-          if (!this.deviceId) {
-            this.log.error('No device ID found! Please ensure your coop door is connected to your Omlet account and try again.');
-            return;
-          }
-        }
-        
-        await this.discoverDevices();
+      } else if (this.email && this.password) {
+        this.log.info('Logging into Omlet API');
+        this.authMode = 'password';
+        await this.login();
+      } else {
+        this.log.error('Not configured. Open the Omlet Coop plugin settings and log in.');
         return;
       }
       
-      if (!this.email || !this.password) {
-        this.log.error('Enter email address & password to configure plugin');
-        return;
+      // Only once authentication has succeeded, so a failed login never strands
+      // the user with no password and no token.
+      if (this.password) {
+        this.scrubConfigPassword();
       }
-      
-      this.log.info('Logging into Omlet API');
-      await this.login();
       
       if (!this.deviceId) {
         this.log.info('Discovering device ID');
@@ -292,7 +353,7 @@ class OmletCoopPlatform {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Content-Length': postData.length,
+          'Content-Length': Buffer.byteLength(postData),
           'Accept': 'application/json'
         },
         timeout: 10000
@@ -319,7 +380,7 @@ class OmletCoopPlatform {
               const json = JSON.parse(data);
               if (json.apiKey) {
                 if (this.debug) {
-                  this.log.info('[Auth] Bearer token received:', json.apiKey);
+                  this.log.info('[Auth] Bearer token received (' + json.apiKey.length + ' chars)');
                 }
                 resolve(json.apiKey);
               } else {
@@ -461,9 +522,16 @@ class OmletCoopPlatform {
       throw new Error('Authentication permanently failed - restart Homebridge after fixing credentials');
     }
 
-    // If using token-only mode with no credentials, can't re-login
+    // An API key is long-lived and console-managed: a 401 means revoked, not expired.
+    if (this.authMode === 'apikey') {
+      this.log.error('API key was rejected. Generate a new key in the Omlet developer console and update the plugin settings.');
+      this.authFailedPermanently = true;
+      return false;
+    }
+    
+    // No password is persisted any more, so a dead token needs a manual re-login.
     if (!this.email || !this.password) {
-      this.log.error('API token expired or invalid. No email/password configured for automatic re-login. Please update your API token in the plugin settings.');
+      this.log.error('Stored API token is no longer valid. Open the Omlet Coop plugin settings and log in again.');
       this.authFailedPermanently = true;
       return false;
     }
@@ -733,7 +801,7 @@ class OmletCoopAccessory {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
-          'Content-Length': postData.length,
+          'Content-Length': Buffer.byteLength(postData),
           'Accept': 'application/json'
         },
         timeout: 10000

@@ -26,3 +26,8 @@ npm-debug.log*
 # Backup files
 *.bak
 *~
+
+# Markdown: only the published docs are tracked
+*.md
+!README.md
+!CHANGELOG.md

@@ -192,6 +192,13 @@
       </div>
       
       <div class="form-group">
+        <label for="apiKey">Developer API Key</label>
+        <input type="text" class="form-control" id="apiKey" placeholder="optional" pattern="[A-Za-z0-9_-]{1,128}">
+        <small style="color: #6c757d;">Generated in the Omlet developer console at smart.omlet.com/developers. If set, this is used instead of your email address and password.</small>
+        <div class="field-error" id="apiKeyError"></div>
+      </div>
+      
+      <div class="form-group">
         <label for="manualToken">API Token</label>
         <input type="text" class="form-control" id="manualToken" placeholder="optional, will be auto-discovered" pattern="[a-zA-Z0-9]{1,64}">
         <small style="color: #6c757d;">Provide API token instead of email address and password, if desired.</small>
@@ -291,9 +298,6 @@ function togglePasswordVisibility() {
   if (currentConfig.email) {
     document.getElementById('email').value = currentConfig.email;
   }
-  if (currentConfig.password) {
-    document.getElementById('password').value = currentConfig.password;
-  }
   if (currentConfig.countryCode) {
     document.getElementById('countryCode').value = currentConfig.countryCode;
   }
@@ -301,6 +305,9 @@ function togglePasswordVisibility() {
   // Pre-fill advanced settings
   if (currentConfig.apiServer) {
     document.getElementById('apiServer').value = currentConfig.apiServer;
+  }
+  if (currentConfig.apiKey) {
+    document.getElementById('apiKey').value = currentConfig.apiKey;
   }
   if (currentConfig.bearerToken) {
     document.getElementById('manualToken').value = currentConfig.bearerToken;
@@ -328,8 +335,8 @@ function togglePasswordVisibility() {
       name: currentConfig.name || 'Omlet Coop',
       platform: 'OmletCoop',
       email: document.getElementById('email').value.trim() || undefined,
-      password: document.getElementById('password').value.trim() || undefined,
       countryCode: document.getElementById('countryCode').value,
+      apiKey: document.getElementById('apiKey').value.trim() || undefined,
       bearerToken: document.getElementById('manualToken').value.trim() || undefined,
       deviceId: document.getElementById('manualDeviceId').value.trim() || undefined,
       enableLight: document.getElementById('enableLight').checked,
@@ -364,6 +371,7 @@ function togglePasswordVisibility() {
   document.getElementById('password').addEventListener('change', updateConfigFromForm);
   document.getElementById('countryCode').addEventListener('change', updateConfigFromForm);
   document.getElementById('apiServer').addEventListener('change', updateConfigFromForm);
+  document.getElementById('apiKey').addEventListener('change', updateConfigFromForm);
   document.getElementById('manualToken').addEventListener('change', updateConfigFromForm);
   document.getElementById('manualDeviceId').addEventListener('change', updateConfigFromForm);
   document.getElementById('pollInterval').addEventListener('change', updateConfigFromForm);
@@ -383,6 +391,45 @@ function togglePasswordVisibility() {
   function hideStatus() {
     document.getElementById('statusMessage').classList.add('hidden');
   }
+  
+  // Check the saved session on open, so an expired token is surfaced here rather
+  // than only as "No Response" in the Home app. Runs server-side: the token is
+  // never sent to the browser.
+  async function checkSessionStatus() {
+    try {
+      const result = await homebridge.request('/session-status', {
+        apiKey: currentConfig.apiKey || undefined,
+        bearerToken: currentConfig.bearerToken || undefined,
+        debug: !!currentConfig.debug
+      });
+      
+      if (!result || result.state === 'unconfigured') {
+        return; // first run - the form already explains what to do
+      }
+      
+      if (result.state === 'valid') {
+        const count = result.deviceCount || 0;
+        showStatus(`Connected to Omlet. ${count} device${count === 1 ? '' : 's'} found.`, 'success');
+        return;
+      }
+      
+      if (result.state === 'expired') {
+        if (result.source === 'apiKey') {
+          showStatus('Your API key was rejected. Generate a new one in the Omlet developer console and update it below.', 'error');
+        } else {
+          showStatus('Your saved session has expired. Enter your password and log in again.', 'error');
+        }
+        return;
+      }
+      
+      // Could not reach Omlet - not the same as an expired session.
+      showStatus('Could not reach Omlet to check your saved session. It may still be valid.', 'info');
+    } catch (error) {
+      console.error('Session check failed:', error);
+    }
+  }
+  
+  checkSessionStatus();
   
   // Client-side validation helper
   function validateInputs(email, apiServer, pollInterval) {
@@ -586,6 +633,7 @@ function togglePasswordVisibility() {
     const email = document.getElementById('email').value.trim();
     const password = document.getElementById('password').value;
     const countryCode = document.getElementById('countryCode').value;
+    const apiKey = document.getElementById('apiKey').value.trim();
     const manualToken = document.getElementById('manualToken').value.trim();
     const manualDeviceId = document.getElementById('manualDeviceId').value.trim();
     const apiServer = document.getElementById('apiServer').value.trim() || 'x107.omlet.co.uk';
@@ -607,6 +655,80 @@ function togglePasswordVisibility() {
     hideStatus();
     
     try {
+      // === API KEY: authenticates directly, so there is no login step and no
+      // token to store. Validate it, discover the device, save, and stop here. ===
+      if (apiKey) {
+        showStatus('Validating API key...', 'info');
+        loginButton.textContent = 'Validating...';
+        
+        const keyResult = await homebridge.request('/validate', {
+          token: apiKey,
+          deviceId: manualDeviceId || null,
+          debug: debugMode
+        });
+        
+        if (!keyResult.tokenValid) {
+          throw new Error('API key was rejected. Check the key in the Omlet developer console and try again.');
+        }
+        
+        if (!keyResult.devices || keyResult.devices.length === 0) {
+          throw new Error('No coop doors found on this account. Please ensure your coop door is connected to your Omlet account and try again.');
+        }
+        
+        const keyConfig = {
+          name: currentConfig.name || 'Omlet Coop',
+          platform: 'OmletCoop',
+          countryCode: countryCode,
+          apiKey: apiKey,
+          enableLight: enableLight,
+          enableBattery: enableBattery,
+          debug: debugMode
+        };
+        
+        if (email) {
+          keyConfig.email = email;
+        }
+        
+        // Kept so switching to a key does not silently discard a token the user typed
+        if (manualToken) {
+          keyConfig.bearerToken = manualToken;
+        }
+        
+        if (apiServer && apiServer !== 'x107.omlet.co.uk') {
+          keyConfig.apiServer = apiServer;
+        }
+        
+        if (pollInterval && pollInterval !== 30) {
+          keyConfig.pollInterval = pollInterval;
+        }
+        
+        let keyMessage;
+        
+        if (manualDeviceId && keyResult.deviceValid) {
+          keyConfig.deviceId = manualDeviceId;
+          keyMessage = 'API key and Device ID validated successfully!';
+        } else if (manualDeviceId) {
+          keyMessage = `Invalid device ID. Using discovered device instead: ${keyResult.devices[0].name}`;
+        } else {
+          keyMessage = `API key validated. Found ${keyResult.devices.length} device(s): ${keyResult.devices[0].name}`;
+        }
+        
+        discoveredDevices = keyResult.devices;
+        displayDevices(discoveredDevices);
+        
+        try {
+          await homebridge.updatePluginConfig([JSON.parse(JSON.stringify(keyConfig))]);
+        } catch (configError) {
+          console.error('Config update error:', configError);
+          throw new Error('Failed to update config: ' + configError.message);
+        }
+        
+        showStatus(keyMessage + ' Click "Save" to apply changes.', 'success');
+        loginButton.textContent = 'Validated ✓';
+        loginButton.disabled = false;
+        return;
+      }
+      
       // Determine what we have
       const hasToken = !!manualToken;
       const hasEmail = !!email;
@@ -860,18 +982,31 @@ function togglePasswordVisibility() {
         delete newConfig.deviceId;
       }
       
-      // Only save credentials if appropriate
-      if (shouldSaveCredentials) {
+      // The password is NEVER written to config.json. The email is kept only so the
+      // form can be pre-filled; the token in Homebridge storage is what authenticates.
+      if (shouldSaveCredentials && email) {
         newConfig.email = email;
-        newConfig.password = password;
       } else {
-        // Clear credentials from config if not saving
         delete newConfig.email;
-        delete newConfig.password;
       }
+      delete newConfig.password;
       
       // Debug: Log what we're about to save
       console.log('Saving config:', JSON.stringify(newConfig, null, 2));
+      
+      // Persist the token to Homebridge storage so the plugin can authenticate
+      // without a password. This is what replaces storing credentials in config.json.
+      if (finalToken) {
+        try {
+          await homebridge.request('/persist-token', {
+            token: finalToken,
+            deviceId: finalDeviceId || null
+          });
+        } catch (persistError) {
+          console.error('Token persist error:', persistError);
+          throw new Error('Logged in, but could not save the token: ' + persistError.message);
+        }
+      }
       
       try {
         // Ensure config is JSON-serializable (fixes clone errors)

@@ -87,5 +87,7 @@ build/
 *.bak
 *~
 
-# Local API notes (not for publication)
-docs/OMLET-API.md
+# Markdown: only the published docs are tracked
+*.md
+!README.md
+!CHANGELOG.md
