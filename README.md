@@ -11,24 +11,25 @@ This Homebridge plugin allows you to control your Omlet coop door and coop light
 - **Light Control**: Turn your coop light on and off (optional, requires Omlet Coop Light module)
 - **Real-time Status**: Automatic polling to keep door and light status up to date
 - **HomeKit Integration**: Full integration with Apple HomeKit scenes and automations
+- **HomeBridge 2.0 compatible**
 
 ## Requirements
 
 - Omlet Smart Automatic Chicken Coop Door
 - Omlet Wi-Fi Module
 - Omlet Coop Light (optional, for light integration)
-- Homebridge v1.6.0 or later (Homebridge 2.0 compatible)
+- Homebridge v1.6.0 or later
 - Node.js v20.0.0 or later
 
 ## Installation
 
-### Homebridge UI (Recommended)
+### Homebridge web interface
 
-1. Search for "homebridge-omlet" in the Homebridge UI plugin search
+1. Search for **homebridge-omlet** in the Homebridge UI plugin search
 2. Click **Install**
-3. Click **Settings** to configure the plugin using the interactive setup interface
+3. Click **Settings** to configure the plugin
 
-### Command Line
+### Command line
 
 ```bash
 npm install -g homebridge-omlet
@@ -36,66 +37,41 @@ npm install -g homebridge-omlet
 
 ## Configuration
 
-Open **Plugin Settings** in the Homebridge UI and pick one of two ways to connect.
-Either works fully; they differ in setup effort and in how much control you keep.
-
-|                                   | Developer API key | Omlet account |
-|-----------------------------------|:-----------------:|:-------------:|
-| Officially supported by Omlet     | Yes               | No            |
-| You can revoke access later       | Yes               | No            |
-| Password typed into Homebridge    | Never             | Once, at setup |
-| Setup effort                      | Generate a key first | Just log in |
-
-Whichever you choose, your coop door is discovered automatically and your password is
-never written to `config.json`.
+Open **Plugin Settings** in the Homebridge web interface and pick one of two ways to connect.
 
 ### Option 1: Developer API key
 
-Recommended if you are comfortable generating a key. It is the method Omlet
-officially documents, and you can revoke the key at any time from their console —
-something you cannot do with a session created by logging in.
+This is the recommended setup method, and the one officially supported by Omlet.
 
-1. Go to [smart.omlet.com/developers](https://smart.omlet.com/developers) and log in
-   with the same email address and password you use for the Omlet app
-2. Open **API Keys** and click **Generate Key**, then copy it
-3. In the plugin settings, choose **Developer API key**, paste it in, and click
-   **Validate Key**
+1. Go to [smart.omlet.com/developers/login](https://smart.omlet.com/developers/login) and login with your Omlet email address and password.
+2. Open **API Keys** and click **Generate Key**, then copy it.
+3. In Homebridge plugin settings, choose **Developer API key**, paste the key, and click **Login**.
 
-Keys are long-lived and do not expire on their own. If one stops working it has been
-revoked, and you will need to generate a new one.
+Your API key is stored in your Homebridge config, and your coop and accessories are auto-discovered.
 
 ### Option 2: Omlet account
 
-The simplest route, and the right choice if you would rather not deal with the
-developer console.
+This is the simplest setup option, and does not require the manual generation of an API key.
 
-1. In the plugin settings, choose **Omlet account email and password**
-2. Enter your email address and password, and select your country
-3. Click **Login**
+1. In Homebridge plugin settings, choose **Omlet account**.
+2. Enter your email address and password, and select your country.
+3. Click **Login**.
 
-Your password is used once to obtain a token and is then discarded — see
-[Password Handling](#password-handling) below.
+Logging in will generate an Omlet API key which is stored in your Homebridge config, and your coop and accessories are auto-discovered. This method impersonates the login process used by the official Omlet mobile app, and therefore the API key generated is not visible in the Omlet Developer console and cannot be revoked.
 
 ### Advanced Settings
 
 Rarely needed:
 
-- **API Token**: Provide a token directly instead of logging in
 - **API Server**: Override the default API server hostname (if ever needed)
-- **Poll Interval**: Reduce how often the plugin checks device status (default: 30 seconds)
+- **Poll Interval**: Reduce how often the plugin checks device status (minimum: 30 seconds)
 - **Debug Mode**: Enable detailed logging for troubleshooting
 
 ### Password Handling
 
-Your password is never saved to `config.json`. When you log in, the plugin exchanges
-it for a token and stores only that token, in the Homebridge storage directory. If
-you have upgraded from an older version, any password already in your config is
-removed automatically the next time the plugin starts.
+When signing in with email address and password, your credentials are never saved to `config.json`. The plugin obtains a token and stores it instead. If you have upgraded from an older version, any password already in your config is scrubbed automatically the next time the plugin starts.
 
-Because no password is kept, a token that stops working cannot be refreshed on its
-own. If that happens the accessory shows **No Response** in the Home app, and opening
-the plugin settings will tell you the session has expired. Enter your password and
-click **Login** again.
+Because no password is kept, a token that stops working cannot be refreshed on its own. If that happens the accessory shows **No Response** in the Home app, and opening the plugin settings will tell you the session has expired. Complete the sign-in process again to restore your accessories.
 
 ### Config.json Example (Alternative Method)
 
@@ -126,9 +102,6 @@ If you prefer to edit `config.json` directly:
   removes the password from `config.json` on its next start, OR
 - **Developer API key** (`apiKey`) — used in preference to everything else, OR
 - **API token** (`bearerToken`)
-
-Setting up through the plugin settings screen is recommended, since it never writes
-your password to `config.json` in the first place.
 
 Set `enableLight` to `false` if you do not have the Omlet Coop Light module installed.
 

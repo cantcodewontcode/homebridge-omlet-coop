@@ -12,41 +12,9 @@ class OmletPluginUiServer extends HomebridgePluginUiServer {
     this.onRequest('/login', this.handleLogin.bind(this));
     this.onRequest('/discover', this.handleDiscover.bind(this));
     this.onRequest('/validate', this.handleValidate.bind(this));
-    this.onRequest('/persist-token', this.handlePersistToken.bind(this));
     this.onRequest('/session-status', this.handleSessionStatus.bind(this));
     
     this.ready();
-  }
-  
-  // The password is exchanged for a token here and the token is written to the
-  // Homebridge storage directory. The password itself is never persisted.
-  async handlePersistToken(payload) {
-    const { token, deviceId } = payload;
-    
-    if (!token) {
-      throw new RequestError('Token is required', { status: 400 });
-    }
-    
-    if (!this.homebridgeStoragePath) {
-      throw new RequestError('Homebridge storage path is unavailable', { status: 500 });
-    }
-    
-    const file = path.join(this.homebridgeStoragePath, TOKEN_FILE);
-    const data = {
-      bearerToken: token,
-      lastUpdated: new Date().toISOString()
-    };
-    
-    if (deviceId) {
-      data.deviceId = deviceId;
-    }
-    
-    try {
-      fs.writeFileSync(file, JSON.stringify(data, null, 2));
-      return { success: true };
-    } catch (error) {
-      throw new RequestError(`Failed to save credentials: ${error.message}`, { status: 500 });
-    }
   }
   
   readStoredCredentials() {

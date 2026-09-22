@@ -140,7 +140,7 @@
         <input type="radio" name="authMethod" value="key" checked> Developer API key
       </label>
       <label style="display: block; font-weight: normal;">
-        <input type="radio" name="authMethod" value="account"> Omlet account email and password
+        <input type="radio" name="authMethod" value="account"> Omlet account
       </label>
     </div>
     
@@ -148,7 +148,7 @@
       <div class="form-group">
         <label for="apiKey">Developer API Key</label>
         <input type="text" class="form-control" id="apiKey" placeholder="paste your key here" pattern="[A-Za-z0-9_-]{1,128}">
-        <small style="color: #6c757d;">Generate one at <a href="https://smart.omlet.com/developers" target="_blank" rel="noopener">smart.omlet.com/developers</a> under <strong>API Keys</strong>. Officially supported by Omlet, can be revoked whenever you like, and no password is entered here.</small>
+        <small style="color: #6c757d;">Generate one at <a href="https://smart.omlet.com/developers/login" target="_blank" rel="noopener">smart.omlet.com/developers/login</a> under <strong>API Keys</strong>. Officially supported by Omlet, can be revoked whenever you like, and no password is entered here.</small>
         <div class="field-error" id="apiKeyError"></div>
       </div>
     </div>
@@ -193,13 +193,6 @@
     </div>
     </div>
     
-    <div class="form-group">
-      <label>
-        <input type="checkbox" id="enableLight" checked> Enable Coop Light Accessory
-      </label>
-      <small style="color: #6c757d;">Uncheck if you do not have the Omlet coop light module</small>
-    </div>
-    
     <!-- Advanced Settings Section -->
     <div style="margin-top: 25px; margin-bottom: 15px;">
       <button type="button" class="btn-link" onclick="toggleAdvanced()" style="background: none; border: none; color: #007bff; cursor: pointer; font-size: 14px; padding: 0; text-decoration: none;">
@@ -216,13 +209,6 @@
       </div>
       
       <div class="form-group">
-        <label for="manualToken">API Token</label>
-        <input type="text" class="form-control" id="manualToken" placeholder="optional, will be auto-discovered" pattern="[a-zA-Z0-9]{1,64}">
-        <small style="color: #6c757d;">Provide API token instead of email address and password, if desired.</small>
-        <div class="field-error" id="manualTokenError"></div>
-      </div>
-      
-      <div class="form-group">
         <label for="manualDeviceId">Device ID</label>
         <input type="text" class="form-control" id="manualDeviceId" placeholder="optional, will be auto-discovered" pattern="[a-zA-Z0-9]{1,32}">
         <small style="color: #6c757d;">Advanced. Not normally needed - your coop door is found automatically.</small>
@@ -234,6 +220,13 @@
         <input type="number" class="form-control" id="pollInterval" placeholder="30" min="30" max="300" step="1">
         <small style="color: #6c757d;">How often to check device status (30-300 seconds)</small>
         <div class="field-error" id="pollIntervalError"></div>
+      </div>
+      
+      <div class="form-group">
+        <label>
+          <input type="checkbox" id="enableLight" checked> Enable Coop Light Accessory
+        </label>
+        <small style="color: #6c757d;">Uncheck if you do not have the Omlet coop light module</small>
       </div>
       
       <div class="form-group">
@@ -328,9 +321,6 @@ function togglePasswordVisibility() {
   if (currentConfig.apiKey) {
     document.getElementById('apiKey').value = currentConfig.apiKey;
   }
-  if (currentConfig.bearerToken) {
-    document.getElementById('manualToken').value = currentConfig.bearerToken;
-  }
   if (currentConfig.deviceId) {
     document.getElementById('manualDeviceId').value = currentConfig.deviceId;
   }
@@ -356,7 +346,7 @@ function togglePasswordVisibility() {
       email: document.getElementById('email').value.trim() || undefined,
       countryCode: document.getElementById('countryCode').value,
       apiKey: selectedMethod() === 'key' ? (document.getElementById('apiKey').value.trim() || undefined) : undefined,
-      bearerToken: document.getElementById('manualToken').value.trim() || undefined,
+      bearerToken: selectedMethod() === 'account' ? (currentConfig.bearerToken || undefined) : undefined,
       deviceId: document.getElementById('manualDeviceId').value.trim() || undefined,
       enableLight: document.getElementById('enableLight').checked,
       enableBattery: document.getElementById('enableBattery').checked,
@@ -391,7 +381,6 @@ function togglePasswordVisibility() {
   document.getElementById('countryCode').addEventListener('change', updateConfigFromForm);
   document.getElementById('apiServer').addEventListener('change', updateConfigFromForm);
   document.getElementById('apiKey').addEventListener('change', updateConfigFromForm);
-  document.getElementById('manualToken').addEventListener('change', updateConfigFromForm);
   document.getElementById('manualDeviceId').addEventListener('change', updateConfigFromForm);
   document.getElementById('pollInterval').addEventListener('change', updateConfigFromForm);
   document.getElementById('enableLight').addEventListener('change', updateConfigFromForm);
@@ -422,7 +411,7 @@ function togglePasswordVisibility() {
     const method = selectedMethod();
     document.getElementById('methodKey').classList.toggle('hidden', method !== 'key');
     document.getElementById('methodAccount').classList.toggle('hidden', method === 'key');
-    document.getElementById('loginButton').textContent = method === 'key' ? 'Validate Key' : 'Login';
+    document.getElementById('loginButton').textContent = 'Login';
   }
   
   // Open on whichever method is already configured. A fresh install starts on the key.
@@ -691,7 +680,7 @@ function togglePasswordVisibility() {
     const password = document.getElementById('password').value;
     const countryCode = document.getElementById('countryCode').value;
     const apiKey = document.getElementById('apiKey').value.trim();
-    const manualToken = document.getElementById('manualToken').value.trim();
+    const manualToken = ''; // no longer a field: the Developer API key covers this
     const manualDeviceId = document.getElementById('manualDeviceId').value.trim();
     const apiServer = document.getElementById('apiServer').value.trim() || 'x107.omlet.co.uk';
     const pollInterval = parseInt(document.getElementById('pollInterval').value) || 30;
@@ -780,7 +769,7 @@ function togglePasswordVisibility() {
         }
         
         showStatus(keyMessage + ' Click "Save" to apply changes.', 'success');
-        loginButton.textContent = 'Validated ✓';
+        loginButton.textContent = 'Login Successful ✓';
         loginButton.disabled = false;
         return;
       }
@@ -1017,15 +1006,11 @@ function togglePasswordVisibility() {
         newConfig.pollInterval = pollInterval;
       }
       
-      // CRITICAL: Only save token/deviceId to config if user MANUALLY entered them
-      // Auto-discovered credentials are saved to storage by the plugin, not config
-      
-      // Save token to config ONLY if user manually provided it (not auto-discovered)
-      if (hasToken && finalToken === manualToken) {
-        // User manually entered this token → save to config
+      // The token goes in config.json, the same place the API key lives, so both
+      // methods behave identically and the user can see what they are holding.
+      if (finalToken) {
         newConfig.bearerToken = finalToken;
       } else {
-        // Token was auto-discovered via email/password → don't save to config (goes to storage)
         delete newConfig.bearerToken;
       }
       
@@ -1039,7 +1024,7 @@ function togglePasswordVisibility() {
       }
       
       // The password is NEVER written to config.json. The email is kept only so the
-      // form can be pre-filled; the token in Homebridge storage is what authenticates.
+      // form can be pre-filled; the token is what authenticates.
       if (shouldSaveCredentials && email) {
         newConfig.email = email;
       } else {
@@ -1050,24 +1035,11 @@ function togglePasswordVisibility() {
       // Debug: Log what we're about to save
       console.log('Saving config:', JSON.stringify(newConfig, null, 2));
       
-      // Persist the token to Homebridge storage so the plugin can authenticate
-      // without a password. This is what replaces storing credentials in config.json.
-      if (finalToken) {
-        try {
-          await homebridge.request('/persist-token', {
-            token: finalToken,
-            deviceId: finalDeviceId || null
-          });
-        } catch (persistError) {
-          console.error('Token persist error:', persistError);
-          throw new Error('Logged in, but could not save the token: ' + persistError.message);
-        }
-      }
-      
       try {
         // Ensure config is JSON-serializable (fixes clone errors)
         const serializableConfig = JSON.parse(JSON.stringify(newConfig));
         await homebridge.updatePluginConfig([serializableConfig]);
+        currentConfig = serializableConfig;
         showStatus('Login successful! Click "Save" to apply changes.', 'success');
         loginButton.textContent = 'Login Successful ✓';
         loginButton.disabled = false;

@@ -45,7 +45,7 @@
       "bearerToken": {
         "title": "API Token",
         "type": "string",
-        "description": "Provide API token instead of email address and password, if desired. Must be alphanumeric and no longer than 128 characters."
+        "description": "Set automatically when you log in. To supply one yourself, use the Developer API Key field instead."
       },
       "deviceId": {
         "title": "Device ID",
@@ -93,7 +93,6 @@
       "expanded": false,
       "items": [
         "apiServer",
-        "bearerToken",
         "deviceId",
         "pollInterval",
         "enableLight",

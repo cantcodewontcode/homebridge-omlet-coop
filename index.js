@@ -3,6 +3,31 @@ const fs = require('fs');
 
 let hap;
 
+// Door state vocabulary, confirmed against a live Autodoor (firmware 1.0.53).
+// While moving, the API reports `openpending` / `closepending` - taken from each
+// action's pendingValue - NOT `opening` / `closing`. The latter are kept in case
+// other firmware reports them; an unknown value falls back to STOPPED.
+const DOOR_OPENING_STATES = ['openpending', 'opening'];
+const DOOR_CLOSING_STATES = ['closepending', 'closing'];
+const DOOR_OPEN_STATES = ['open'].concat(DOOR_OPENING_STATES);
+const DOOR_CLOSED_STATES = ['closed'].concat(DOOR_CLOSING_STATES);
+
+function mapDoorState(state) {
+  if (state === 'open') {
+    return hap.Characteristic.CurrentDoorState.OPEN;
+  }
+  if (state === 'closed') {
+    return hap.Characteristic.CurrentDoorState.CLOSED;
+  }
+  if (DOOR_OPENING_STATES.includes(state)) {
+    return hap.Characteristic.CurrentDoorState.OPENING;
+  }
+  if (DOOR_CLOSING_STATES.includes(state)) {
+    return hap.Characteristic.CurrentDoorState.CLOSING;
+  }
+  return hap.Characteristic.CurrentDoorState.STOPPED;
+}
+
 module.exports = (api) => {
   hap = api.hap;
   api.registerPlatform('homebridge-omlet', 'OmletCoop', OmletCoopPlatform);
@@ -22,8 +47,10 @@ class OmletCoopPlatform {
     this.deviceId = this.validateDeviceId(config.deviceId, 'deviceId');
     this.baseUrl = this.validateHostname(config.apiServer) || 'x107.omlet.co.uk';
     this.pollInterval = this.validatePollInterval(config.pollInterval);
-    this.enableLight = config.enableLight !== false; // default true for backwards compatibility
-    this.enableBattery = config.enableBattery === true; // default false (not visible in Apple Home)
+    // "auto" (the default, and what an absent setting means) lets the device decide.
+    // An explicit true/false is an override and is always obeyed.
+    this.enableLight = this.normalizeTriState(config.enableLight, 'enableLight');
+    this.enableBattery = this.normalizeTriState(config.enableBattery, 'enableBattery');
     this.debug = config.debug || false;
     
     this.currentToken = null;
@@ -129,6 +156,23 @@ class OmletCoopPlatform {
     return token;
   }
   
+  normalizeTriState(value, fieldName) {
+    if (value === undefined || value === null || value === '' || value === 'auto') {
+      return 'auto';
+    }
+    
+    if (value === true || value === 'true' || value === 'on' || value === 'yes') {
+      return true;
+    }
+    
+    if (value === false || value === 'false' || value === 'off' || value === 'no') {
+      return false;
+    }
+    
+    this.log.warn(`Invalid ${fieldName} "${value}", using "auto"`);
+    return 'auto';
+  }
+  
   validateApiKey(key) {
     if (!key) {
       return undefined;
@@ -186,8 +230,10 @@ class OmletCoopPlatform {
       if (fs.existsSync(this.storage)) {
         const data = JSON.parse(fs.readFileSync(this.storage, 'utf8'));
         
-        // stored credentials take priority over config since they're more recent
-        if (data.bearerToken) {
+        // config.json is where the settings UI now writes the token, so a token
+        // there is the current one. Storage is a fallback for installs that predate
+        // that, and for tokens the plugin obtained itself by logging in.
+        if (data.bearerToken && !this.bearerToken) {
           const validToken = this.validateToken(data.bearerToken, 'stored bearerToken');
           if (validToken) {
             this.bearerToken = validToken;
@@ -610,23 +656,8 @@ class OmletCoopAccessory {
     
     this.accessoryInfoUpdated = false;
     this.cachedStatus = null;
-    
-    // services need to be removed before re-adding, otherwise stale ones persist in cache
-    if (!this.enableLight) {
-      const existingLight = this.accessory.getService(hap.Service.Lightbulb);
-      if (existingLight) {
-        this.log.warn('Light disabled in config, removing light service...');
-        this.accessory.removeService(existingLight);
-      }
-    }
-    
-    if (!this.enableBattery) {
-      const existingBattery = this.accessory.getService(hap.Service.Battery);
-      if (existingBattery) {
-        this.log.warn('Battery disabled in config, removing battery service...');
-        this.accessory.removeService(existingBattery);
-      }
-    }
+    this.transitionTimer = null;
+    this.pendingServiceChange = { light: null, battery: null };
     
     // serial and firmware get updated after the first successful poll
     this.accessory.getService(hap.Service.AccessoryInformation)
@@ -654,48 +685,142 @@ class OmletCoopAccessory {
       .getCharacteristic(hap.Characteristic.ObstructionDetected)
       .onGet(() => false);
     
-    // light and battery are linked to the door as the primary service
-    if (this.enableLight) {
-      this.lightService = this.accessory.getService(hap.Service.Lightbulb) 
-        || this.accessory.addService(hap.Service.Lightbulb);
-      
-      this.lightService.setCharacteristic(hap.Characteristic.Name, 'Coop Light');
-      
-      this.lightService
-        .getCharacteristic(hap.Characteristic.On)
-        .onGet(this.getLightOn.bind(this))
-        .onSet(this.setLightOn.bind(this));
-      
-      this.doorService.addLinkedService(this.lightService);
-    }
+    // An explicit true/false is applied immediately. Under "auto" we keep whatever
+    // the cached accessory already had and let the first poll decide, so the service
+    // does not flicker away and back on every restart.
+    this.applyLightService(this.enableLight === 'auto' ? this.hasLightService() : this.enableLight);
+    this.applyBatteryService(this.enableBattery === 'auto' ? this.hasBatteryService() : this.enableBattery);
     
-    if (this.enableBattery) {
-      this.batteryService = this.accessory.getService(hap.Service.Battery)
-        || this.accessory.addService(hap.Service.Battery);
-      
-      this.batteryService.setCharacteristic(hap.Characteristic.Name, 'Battery');
-      
-      this.batteryService
-        .getCharacteristic(hap.Characteristic.BatteryLevel)
-        .onGet(this.getBatteryLevel.bind(this));
-      
-      this.batteryService
-        .getCharacteristic(hap.Characteristic.ChargingState)
-        .setValue(2); // NOT_CHARGEABLE - Omlet autodoor uses AA batteries
-      
-      this.batteryService
-        .getCharacteristic(hap.Characteristic.StatusLowBattery)
-        .onGet(this.getStatusLowBattery.bind(this));
-      
-      this.doorService.addLinkedService(this.batteryService);
-    }
-    
-    const services = ['door'];
-    if (this.enableLight) services.push('light');
-    if (this.enableBattery) services.push('battery');
-    this.log.info(`Coop accessory initialized with ${services.join(', ')} service${services.length > 1 ? 's' : ''}`);
+    this.log.info(`Coop accessory initialized (light: ${this.describePref(this.enableLight)}, battery: ${this.describePref(this.enableBattery)})`);
     
     this.startPolling();
+  }
+  
+  describePref(pref) {
+    return pref === 'auto' ? 'auto' : (pref ? 'on' : 'off');
+  }
+  
+  hasLightService() {
+    return !!this.accessory.getService(hap.Service.Lightbulb);
+  }
+  
+  hasBatteryService() {
+    return !!this.accessory.getService(hap.Service.Battery);
+  }
+  
+  applyLightService(enabled) {
+    const existing = this.accessory.getService(hap.Service.Lightbulb);
+    
+    if (!enabled) {
+      if (existing) {
+        this.doorService.removeLinkedService(existing);
+        this.accessory.removeService(existing);
+      }
+      this.lightService = null;
+      return;
+    }
+    
+    const service = existing || this.accessory.addService(hap.Service.Lightbulb);
+    service.setCharacteristic(hap.Characteristic.Name, 'Coop Light');
+    service
+      .getCharacteristic(hap.Characteristic.On)
+      .onGet(this.getLightOn.bind(this))
+      .onSet(this.setLightOn.bind(this));
+    this.doorService.addLinkedService(service);
+    this.lightService = service;
+  }
+  
+  applyBatteryService(enabled) {
+    const existing = this.accessory.getService(hap.Service.Battery);
+    
+    if (!enabled) {
+      if (existing) {
+        this.doorService.removeLinkedService(existing);
+        this.accessory.removeService(existing);
+      }
+      this.batteryService = null;
+      return;
+    }
+    
+    const service = existing || this.accessory.addService(hap.Service.Battery);
+    service.setCharacteristic(hap.Characteristic.Name, 'Battery');
+    service
+      .getCharacteristic(hap.Characteristic.BatteryLevel)
+      .onGet(this.getBatteryLevel.bind(this));
+    service
+      .getCharacteristic(hap.Characteristic.ChargingState)
+      .setValue(2); // NOT_CHARGEABLE - the autodoor uses non-rechargeable AA cells
+    service
+      .getCharacteristic(hap.Characteristic.StatusLowBattery)
+      .onGet(this.getStatusLowBattery.bind(this));
+    this.doorService.addLinkedService(service);
+    this.batteryService = service;
+  }
+  
+  // Under "auto" the hardware decides, and it is re-evaluated on every poll rather
+  // than latched at discovery. Moving a coop from mains to batteries, or fitting a
+  // light module, is picked up without anyone touching the config.
+  desiredLight(status) {
+    if (this.enableLight !== 'auto') {
+      return this.enableLight;
+    }
+    
+    const equipped = status?.configuration?.light?.equipped;
+    if (equipped !== undefined && equipped !== null) {
+      return Number(equipped) > 0;
+    }
+    
+    const lightState = status?.state?.light;
+    return lightState !== undefined && lightState !== null;
+  }
+  
+  desiredBattery(status) {
+    if (this.enableBattery !== 'auto') {
+      return this.enableBattery;
+    }
+    
+    const count = status?.batteryCount;
+    if (typeof count === 'number' && count > 0) {
+      return true;
+    }
+    
+    const source = status?.state?.general?.powerSource;
+    if (typeof source === 'string' && source.length > 0) {
+      return source.toLowerCase() !== 'external';
+    }
+    
+    return false;
+  }
+  
+  // Require two consecutive polls to agree before adding or removing a service, so a
+  // single odd reading cannot make an accessory appear and disappear in the Home app.
+  reconcileService(kind, desired, has, apply) {
+    if (desired === has()) {
+      this.pendingServiceChange[kind] = null;
+      return;
+    }
+    
+    const pending = this.pendingServiceChange[kind];
+    
+    if (!pending || pending.desired !== desired) {
+      this.pendingServiceChange[kind] = { desired: desired, count: 1 };
+      return;
+    }
+    
+    pending.count++;
+    
+    if (pending.count >= 2) {
+      this.pendingServiceChange[kind] = null;
+      this.log.info(`${kind === 'light' ? 'Coop light' : 'Battery'} ${desired ? 'detected, adding accessory' : 'no longer present, removing accessory'}`);
+      apply(desired);
+    }
+  }
+  
+  reconcileServices(status) {
+    this.reconcileService('light', this.desiredLight(status),
+      () => this.hasLightService(), (v) => this.applyLightService(v));
+    this.reconcileService('battery', this.desiredBattery(status),
+      () => this.hasBatteryService(), (v) => this.applyBatteryService(v));
   }
   
   // light
@@ -723,17 +848,8 @@ class OmletCoopAccessory {
       await this.sendAction(action, 'Light');
       this.log.info('[Light]', action === 'on' ? 'Turning on light' : 'Turning off light');
       
-      // re-poll after 15s to confirm the light actually switched
-      setTimeout(async () => {
-        try {
-          await this.pollDeviceState();
-          this.pushStateToHomeKit();
-        } catch (error) {
-          if (this.debug) {
-            this.log.warn('[Light] Eager re-poll failed:', error.message);
-          }
-        }
-      }, 15000);
+      // Measured at ~3s on a live light, but watch rather than assume.
+      this.watchTransition('Light', ['on', 'off'], 30);
       
     } catch (error) {
       this.log.error('[Light] Failed to set light state:', error.message);
@@ -948,14 +1064,7 @@ class OmletCoopAccessory {
       if (!doorState) {
         throw new Error('Invalid API response: missing door state');
       }
-      const stateMap = {
-        'open': hap.Characteristic.CurrentDoorState.OPEN,
-        'closed': hap.Characteristic.CurrentDoorState.CLOSED,
-        'opening': hap.Characteristic.CurrentDoorState.OPENING,
-        'closing': hap.Characteristic.CurrentDoorState.CLOSING,
-        'stopping': hap.Characteristic.CurrentDoorState.STOPPED
-      };
-      return stateMap[doorState] ?? hap.Characteristic.CurrentDoorState.STOPPED;
+      return mapDoorState(doorState);
     } catch (error) {
       this.log.error('[Door] Failed to get door state:', error.message);
       throw new Error('Failed to get door state');
@@ -968,7 +1077,7 @@ class OmletCoopAccessory {
         await this.pollDeviceState();
       }
       const doorState = this.cachedStatus?.state?.door?.state;
-      if (doorState === 'open' || doorState === 'opening') {
+      if (DOOR_OPEN_STATES.includes(doorState)) {
         return hap.Characteristic.TargetDoorState.OPEN;
       }
       return hap.Characteristic.TargetDoorState.CLOSED;
@@ -979,7 +1088,54 @@ class OmletCoopAccessory {
   }
   
   async setTargetDoorState(value) {
-    const action = (value === hap.Characteristic.TargetDoorState.OPEN) ? 'open' : 'close';
+    const wantOpen = (value === hap.Characteristic.TargetDoorState.OPEN);
+    const action = wantOpen ? 'open' : 'close';
+    
+    // Telling the Omlet API to open an already-open door (or close an already-closed
+    // one) upsets the server, so never send a redundant command. A person tapping the
+    // tile in the Home app cannot cause this because the tile shows the real state,
+    // but a scheduled automation - "open at sunrise" - fires regardless of state and
+    // hits it every single day.
+    //
+    // Deliberately a fresh read rather than the cache: acting on a stale cache is
+    // wrong in both directions - a redundant command if it says closed when the door
+    // is open, or a door that never opens if it says open when the door is shut.
+    let doorState = null;
+    
+    try {
+      const status = await this.pollDeviceState();
+      doorState = status?.state?.door?.state ?? null;
+    } catch (error) {
+      doorState = this.cachedStatus?.state?.door?.state ?? null;
+      
+      if (doorState) {
+        this.log.warn(`[Door] Could not refresh state before ${action}, using last known state: ${doorState}`);
+      } else {
+        this.log.warn(`[Door] Could not determine door state before ${action}, sending anyway`);
+      }
+    }
+    
+    const alreadyThere = wantOpen
+      ? DOOR_OPEN_STATES.includes(doorState)
+      : DOOR_CLOSED_STATES.includes(doorState);
+    
+    if (alreadyThere) {
+      this.log.info(`[Door] Door is already ${doorState}, not sending ${action}`);
+      
+      // Report the real state back. From HomeKit's point of view the request
+      // succeeded - the door is where it was asked to be.
+      const currentState = mapDoorState(doorState);
+      
+      this.doorService
+        .getCharacteristic(hap.Characteristic.CurrentDoorState)
+        .updateValue(currentState);
+      
+      this.doorService
+        .getCharacteristic(hap.Characteristic.TargetDoorState)
+        .updateValue(value);
+      
+      return;
+    }
     
     try {
       await this.sendAction(action, 'Door');
@@ -993,17 +1149,9 @@ class OmletCoopAccessory {
         .getCharacteristic(hap.Characteristic.CurrentDoorState)
         .updateValue(newCurrentState);
       
-      // re-poll after 15s to confirm the door actually moved
-      setTimeout(async () => {
-        try {
-          await this.pollDeviceState();
-          this.pushStateToHomeKit();
-        } catch (error) {
-          if (this.debug) {
-            this.log.warn('[Door] Eager re-poll failed:', error.message);
-          }
-        }
-      }, 15000);
+      // Measured at ~16s on a live door, but a stiff or obstructed track can take
+      // considerably longer without failing, so watch until it actually settles.
+      this.watchTransition('Door', ['open', 'closed'], 90);
         
     } catch (error) {
       this.log.error('[Door] Failed to set door state:', error.message);
@@ -1034,12 +1182,62 @@ class OmletCoopAccessory {
     }
   }
   
+  // Watch a command through to completion. How long a cycle takes varies: door
+  // calibration, bedding or debris in the track, and battery level all change the
+  // speed without stopping the door working. So poll until it settles rather than
+  // guessing one delay and hoping.
+  watchTransition(label, settledStates, maxSeconds = 90, intervalMs = 5000) {
+    this.stopTransitionWatch();
+    
+    const started = Date.now();
+    
+    this.transitionTimer = setInterval(async () => {
+      let state = null;
+      
+      try {
+        const status = await this.pollDeviceState();
+        this.pushStateToHomeKit();
+        state = (label === 'Door')
+          ? status?.state?.door?.state
+          : status?.state?.light?.state;
+      } catch (error) {
+        if (this.debug) {
+          this.log.warn(`[${label}] Transition poll failed:`, error.message);
+        }
+      }
+      
+      const elapsed = Math.round((Date.now() - started) / 1000);
+      const settled = state && settledStates.includes(state);
+      
+      if (settled) {
+        this.stopTransitionWatch();
+        if (this.debug) {
+          this.log.info(`[${label}] Settled at "${state}" after ${elapsed}s`);
+        }
+        return;
+      }
+      
+      if (elapsed >= maxSeconds) {
+        this.stopTransitionWatch();
+        this.log.warn(`[${label}] Did not settle within ${maxSeconds}s (last state: ${state ?? 'unknown'})`);
+      }
+    }, intervalMs);
+  }
+  
+  stopTransitionWatch() {
+    if (this.transitionTimer) {
+      clearInterval(this.transitionTimer);
+      this.transitionTimer = null;
+    }
+  }
+  
   // polling
   
   async pollDeviceState() {
     try {
       const status = await this.getDeviceStatus('Poll');
       this.cachedStatus = status;
+      this.reconcileServices(status);
 
       // update serial and firmware from the first real response
       if (!this.accessoryInfoUpdated) {
@@ -1082,17 +1280,10 @@ class OmletCoopAccessory {
       // Door state
       const doorState = status.state?.door?.state;
       if (doorState) {
-        const stateMap = {
-          'open': hap.Characteristic.CurrentDoorState.OPEN,
-          'closed': hap.Characteristic.CurrentDoorState.CLOSED,
-          'opening': hap.Characteristic.CurrentDoorState.OPENING,
-          'closing': hap.Characteristic.CurrentDoorState.CLOSING,
-          'stopping': hap.Characteristic.CurrentDoorState.STOPPED
-        };
-        const currentState = stateMap[doorState] ?? hap.Characteristic.CurrentDoorState.STOPPED;
+        const currentState = mapDoorState(doorState);
         this.doorService.getCharacteristic(hap.Characteristic.CurrentDoorState).updateValue(currentState);
 
-        const targetState = (doorState === 'open' || doorState === 'opening')
+        const targetState = DOOR_OPEN_STATES.includes(doorState)
           ? hap.Characteristic.TargetDoorState.OPEN
           : hap.Characteristic.TargetDoorState.CLOSED;
         this.doorService.getCharacteristic(hap.Characteristic.TargetDoorState).updateValue(targetState);
@@ -1103,7 +1294,7 @@ class OmletCoopAccessory {
       }
 
       // Light state
-      if (this.enableLight && this.lightService) {
+      if (this.lightService) {
         const lightState = status.state?.light?.state;
         if (lightState !== undefined) {
           const isOn = (lightState === 'on' || lightState === 'onpending');
@@ -1115,7 +1306,7 @@ class OmletCoopAccessory {
       }
 
       // Battery state
-      if (this.enableBattery && this.batteryService) {
+      if (this.batteryService) {
         const batteryLevel = status.state?.general?.batteryLevel;
         if (batteryLevel !== undefined && batteryLevel !== null) {
           this.batteryService.getCharacteristic(hap.Characteristic.BatteryLevel).updateValue(batteryLevel);
@@ -1132,6 +1323,8 @@ class OmletCoopAccessory {
   }
 
   stopPolling() {
+    this.stopTransitionWatch();
+    
     if (this.pollTimer) {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
