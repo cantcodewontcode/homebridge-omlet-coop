@@ -22,6 +22,7 @@ coverage
 
 # Dependency directories
 node_modules/
+omlet.jpg
 
 # Optional npm cache directory
 .npm
@@ -85,3 +86,6 @@ build/
 # Backup files
 *.bak
 *~
+
+# Local API notes (not for publication)
+docs/OMLET-API.md

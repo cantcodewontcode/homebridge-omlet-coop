@@ -1,5 +1,8 @@
 # Changelog
 
+## [0.9.7] - 2026-02-18
+- Fixed config schema: moved required fields to object-level array per JSON Schema spec
+
 ## [0.9.6] - 2026-02-17
 - Verified Homebridge 2.0 compatibility
 - Updated minimum Node.js requirement to v20

@@ -607,7 +607,7 @@ class OmletCoopAccessory {
       
       this.batteryService
         .getCharacteristic(hap.Characteristic.ChargingState)
-        .onGet(this.getChargingState.bind(this));
+        .setValue(2); // NOT_CHARGEABLE - Omlet autodoor uses AA batteries
       
       this.batteryService
         .getCharacteristic(hap.Characteristic.StatusLowBattery)
@@ -697,11 +697,6 @@ class OmletCoopAccessory {
       this.log.error('[Battery] Failed to get battery level:', error.message);
       throw new Error('Failed to get battery level');
     }
-  }
-  
-  getChargingState() {
-    // Omlet autodoor uses AA batteries - not rechargeable, always NOT_CHARGEABLE
-    return 2;
   }
   
   async getStatusLowBattery() {
@@ -1050,7 +1045,6 @@ class OmletCoopAccessory {
         const batteryLevel = status.state?.general?.batteryLevel;
         if (batteryLevel !== undefined && batteryLevel !== null) {
           this.batteryService.getCharacteristic(hap.Characteristic.BatteryLevel).updateValue(batteryLevel);
-          this.batteryService.getCharacteristic(hap.Characteristic.ChargingState).updateValue(2); // NOT_CHARGEABLE
           const isLow = (batteryLevel < 20) ? 1 : 0;
           this.batteryService.getCharacteristic(hap.Characteristic.StatusLowBattery).updateValue(isLow);
           if (this.debug) {
