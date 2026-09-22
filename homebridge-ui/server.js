@@ -38,10 +38,11 @@ class OmletPluginUiServer extends HomebridgePluginUiServer {
   // plugin uses at runtime. The token is resolved and tested server-side so it is
   // never sent to the browser.
   async handleSessionStatus(payload) {
-    const { apiKey, bearerToken, debug } = payload || {};
+    const { bearerToken, debug } = payload || {};
     
-    let token = apiKey || null;
-    let source = token ? 'apiKey' : null;
+    // config.json is authoritative; storage is the fallback for older installs
+    let token = bearerToken || null;
+    let source = token ? 'config' : null;
     
     if (!token) {
       const stored = this.readStoredCredentials();
@@ -49,11 +50,6 @@ class OmletPluginUiServer extends HomebridgePluginUiServer {
         token = stored.bearerToken;
         source = 'storage';
       }
-    }
-    
-    if (!token && bearerToken) {
-      token = bearerToken;
-      source = 'config';
     }
     
     if (!token) {

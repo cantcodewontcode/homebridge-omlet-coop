@@ -43,7 +43,6 @@ class OmletCoopPlatform {
     this.password = config.password;
     this.countryCode = this.validateCountryCode(config.countryCode);
     this.bearerToken = this.validateToken(config.bearerToken, 'bearerToken');
-    this.apiKey = this.validateApiKey(config.apiKey);
     this.deviceId = this.validateDeviceId(config.deviceId, 'deviceId');
     this.baseUrl = this.validateHostname(config.apiServer) || 'x107.omlet.co.uk';
     this.pollInterval = this.validatePollInterval(config.pollInterval);
@@ -145,11 +144,13 @@ class OmletCoopPlatform {
       return undefined;
     }
     
-    // Must be alphanumeric, max 128 characters
-    const tokenRegex = /^[a-zA-Z0-9]{1,128}$/;
+    // A developer console key and a login-issued token are the same credential and
+    // go in the same field. Console keys are not strictly alphanumeric - Omlet's own
+    // published examples contain underscores - so allow underscore and hyphen too.
+    const tokenRegex = /^[A-Za-z0-9_\-]{1,128}$/;
     
     if (!tokenRegex.test(token)) {
-      this.log.error(`Invalid ${fieldName}: must be alphanumeric and less than 128 characters`);
+      this.log.error(`Invalid ${fieldName}: must be 1-128 characters, letters, digits, underscore or hyphen`);
       return undefined;
     }
     
@@ -171,24 +172,6 @@ class OmletCoopPlatform {
     
     this.log.warn(`Invalid ${fieldName} "${value}", using "auto"`);
     return 'auto';
-  }
-  
-  validateApiKey(key) {
-    if (!key) {
-      return undefined;
-    }
-    
-    // Developer console keys are not strictly alphanumeric - published examples
-    // contain underscores. Kept separate from validateToken() so the rules for
-    // login-issued tokens stay unchanged.
-    const keyRegex = /^[A-Za-z0-9_\-]{1,128}$/;
-    
-    if (!keyRegex.test(key)) {
-      this.log.error('Invalid apiKey: must be 1-128 characters, letters, digits, underscore or hyphen');
-      return undefined;
-    }
-    
-    return key;
   }
   
   validateDeviceId(deviceId, fieldName = 'deviceId') {
@@ -324,15 +307,10 @@ class OmletCoopPlatform {
   
   async initialize() {
     try {
-      // Both auth paths are fully supported. A developer API key wins if present,
-      // otherwise we use a token - obtained by logging in with email and password,
-      // which remains the primary way to set the plugin up.
-      if (this.apiKey) {
-        this.log.info('Using Omlet developer API key');
-        this.authMode = 'apikey';
-        this.currentToken = this.apiKey;
-      } else if (this.bearerToken) {
-        this.log.info('Using stored API token');
+      // One credential, two ways of getting it: generated in the developer console,
+      // or issued by logging in. Either way it lands in bearerToken.
+      if (this.bearerToken) {
+        this.log.info('Using saved API key');
         this.authMode = 'token';
         this.currentToken = this.bearerToken;
       } else if (this.email && this.password) {
@@ -574,16 +552,11 @@ class OmletCoopPlatform {
       throw new Error('Authentication permanently failed - restart Homebridge after fixing credentials');
     }
 
-    // An API key is long-lived and console-managed: a 401 means revoked, not expired.
-    if (this.authMode === 'apikey') {
-      this.log.error('API key was rejected. Generate a new key in the Omlet developer console and update the plugin settings.');
-      this.authFailedPermanently = true;
-      return false;
-    }
-    
-    // No password is persisted any more, so a dead token needs a manual re-login.
+    // No password is persisted, so a dead key cannot be refreshed automatically.
+    // It may have been revoked in the developer console, or the login session behind
+    // it may have ended - the plugin cannot tell which, so cover both.
     if (!this.email || !this.password) {
-      this.log.error('Stored API token is no longer valid. Open the Omlet Coop plugin settings and log in again.');
+      this.log.error('Saved API key is no longer valid. Open the Omlet Coop plugin settings and log in again, or paste a new developer API key.');
       this.authFailedPermanently = true;
       return false;
     }

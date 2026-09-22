@@ -87,8 +87,7 @@ If you prefer to edit `config.json` directly:
       "password": "YOUR_PASSWORD",
       "countryCode": "US",
       "apiServer": "x107.omlet.co.uk",
-      "apiKey": "YOUR_DEVELOPER_API_KEY",
-      "bearerToken": "YOUR_API_TOKEN",
+      "bearerToken": "YOUR_DEVELOPER_API_KEY",
       "pollInterval": 30,
       "enableLight": true,
       "debug": false
@@ -98,10 +97,12 @@ If you prefer to edit `config.json` directly:
 ```
 
 **Note:** At minimum, you must provide one of:
-- **Email address and password** — the plugin logs in, saves a token, and then
-  removes the password from `config.json` on its next start, OR
-- **Developer API key** (`apiKey`) — used in preference to everything else, OR
-- **API token** (`bearerToken`)
+- **Developer API key** (`bearerToken`) — used in preference to everything else, OR
+- **Email address and password** — the plugin logs in, saves the key it is issued to
+  `bearerToken`, and removes the password from `config.json` on its next start
+
+Both methods end up in the same `bearerToken` field, because a key you generate and a
+key issued by logging in are the same credential.
 
 Set `enableLight` to `false` if you do not have the Omlet Coop Light module installed.
 
