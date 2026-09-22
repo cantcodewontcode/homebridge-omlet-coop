@@ -36,50 +36,56 @@ npm install -g homebridge-omlet
 
 ## Configuration
 
-1. **Open Plugin Settings** in Homebridge UI
-2. **Enter your Omlet account email address and password**
-3. **Select your country code**
-4. **Click _Login_** - the plugin will automatically:
-   - Authenticate with your Omlet account
-   - Discover your coop door
-   - Save the configuration
+Open **Plugin Settings** in the Homebridge UI and pick one of two ways to connect.
+Either works fully; they differ in setup effort and in how much control you keep.
 
-That's it! The plugin handles all the complexity behind the scenes.
+|                                   | Developer API key | Omlet account |
+|-----------------------------------|:-----------------:|:-------------:|
+| Officially supported by Omlet     | Yes               | No            |
+| You can revoke access later       | Yes               | No            |
+| Password typed into Homebridge    | Never             | Once, at setup |
+| Setup effort                      | Generate a key first | Just log in |
+
+Whichever you choose, your coop door is discovered automatically and your password is
+never written to `config.json`.
+
+### Option 1: Developer API key
+
+Recommended if you are comfortable generating a key. It is the method Omlet
+officially documents, and you can revoke the key at any time from their console —
+something you cannot do with a session created by logging in.
+
+1. Go to [smart.omlet.com/developers](https://smart.omlet.com/developers) and log in
+   with the same email address and password you use for the Omlet app
+2. Open **API Keys** and click **Generate Key**, then copy it
+3. In the plugin settings, choose **Developer API key**, paste it in, and click
+   **Validate Key**
+
+Keys are long-lived and do not expire on their own. If one stops working it has been
+revoked, and you will need to generate a new one.
+
+### Option 2: Omlet account
+
+The simplest route, and the right choice if you would rather not deal with the
+developer console.
+
+1. In the plugin settings, choose **Omlet account email and password**
+2. Enter your email address and password, and select your country
+3. Click **Login**
+
+Your password is used once to obtain a token and is then discarded — see
+[Password Handling](#password-handling) below.
 
 ### Advanced Settings
 
-For advanced users, the plugin supports:
+Rarely needed:
 
-- **Developer API Key**: Use an official Omlet API key instead of email/password
-- **API Token**: Manually provide an API token instead of email/password
+- **API Token**: Provide a token directly instead of logging in
 - **API Server**: Override the default API server hostname (if ever needed)
 - **Poll Interval**: Reduce how often the plugin checks device status (default: 30 seconds)
 - **Debug Mode**: Enable detailed logging for troubleshooting
 
-#### Using a Developer API Key
-
-Omlet provides a developer console where you can generate an API key for your own
-account. If you would rather not enter your password into Homebridge at all, this is
-the way to do it.
-
-**Step 1: Generate a key**
-
-1. Go to [smart.omlet.com/developers](https://smart.omlet.com/developers) and log in
-   with the same email address and password you use for the Omlet app.
-2. Open **API Keys** and click **Generate Key**.
-3. Copy the key.
-
-**Step 2: Add it to the plugin**
-
-1. Open the plugin settings and expand **Advanced Settings**.
-2. Paste the key into **Developer API Key**.
-3. Click **Login**. The plugin validates the key and discovers your coop door.
-
-An API key is used in preference to everything else, so no password is needed and
-none is stored. Keys are long-lived and do not expire on their own — if one stops
-working it has been revoked, and you will need to generate a new one.
-
-#### Password Handling
+### Password Handling
 
 Your password is never saved to `config.json`. When you log in, the plugin exchanges
 it for a token and stores only that token, in the Homebridge storage directory. If

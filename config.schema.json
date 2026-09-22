@@ -28,7 +28,7 @@
         "title": "Country Code",
         "type": "string",
         "default": "US",
-        "enum": ["AU", "DE", "DK", "FR", "IE", "IT", "NL", "SE", "UK", "US"],
+        "enum": ["AU", "DE", "DK", "ES", "FR", "GB", "IE", "IT", "NL", "NO", "PL", "SE", "US"],
         "description": "Your country"
       },
       "apiServer": {
@@ -51,7 +51,7 @@
         "title": "Device ID",
         "type": "string",
         "placeholder": "optional, will be auto-discovered",
-        "description": "Provide Device ID to skip coop door auto-discovery, or to specify a coop door if you have multiple doors."
+        "description": "Advanced. Not normally needed - your coop door is found automatically."
       },
       "pollInterval": {
         "title": "Poll Interval (seconds)",
@@ -82,6 +82,7 @@
   },
   "layout": [
     "name",
+    "apiKey",
     "email",
     "password",
     "countryCode",
@@ -92,7 +93,6 @@
       "expanded": false,
       "items": [
         "apiServer",
-        "apiKey",
         "bearerToken",
         "deviceId",
         "pollInterval",

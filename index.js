@@ -96,6 +96,12 @@ class OmletCoopPlatform {
       return 'US';
     }
     
+    // Omlet's own sign-in form uses GB for the United Kingdom. Older configs of
+    // ours used UK, which is not a code Omlet issues - translate rather than reject.
+    if (code === 'UK') {
+      return 'GB';
+    }
+    
     // Must be exactly 2 uppercase letters
     const codeRegex = /^[A-Z]{2}$/;
     

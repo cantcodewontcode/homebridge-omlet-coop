@@ -129,11 +129,31 @@
 
 <div class="card">
   <h3>Omlet Coop Setup</h3>
-  <p>Enter your Omlet account credentials to automatically configure your plugin.</p>
+  <p>Choose how you would like to connect, then click the button at the bottom.</p>
   
   <div id="statusMessage" class="hidden"></div>
   
   <div id="loginForm">
+    <div class="form-group">
+      <label style="display: block; margin-bottom: 8px;">Connection Method</label>
+      <label style="display: block; font-weight: normal; margin-bottom: 6px;">
+        <input type="radio" name="authMethod" value="key" checked> Developer API key
+      </label>
+      <label style="display: block; font-weight: normal;">
+        <input type="radio" name="authMethod" value="account"> Omlet account email and password
+      </label>
+    </div>
+    
+    <div id="methodKey">
+      <div class="form-group">
+        <label for="apiKey">Developer API Key</label>
+        <input type="text" class="form-control" id="apiKey" placeholder="paste your key here" pattern="[A-Za-z0-9_-]{1,128}">
+        <small style="color: #6c757d;">Generate one at <a href="https://smart.omlet.com/developers" target="_blank" rel="noopener">smart.omlet.com/developers</a> under <strong>API Keys</strong>. Officially supported by Omlet, can be revoked whenever you like, and no password is entered here.</small>
+        <div class="field-error" id="apiKeyError"></div>
+      </div>
+    </div>
+    
+    <div id="methodAccount" class="hidden">
     <div class="form-group">
       <label for="email">Email Address</label>
       <input type="email" class="form-control" id="email" placeholder="your@email.com" pattern="[^\s@]+@[^\s@]+\.[^\s@]+">
@@ -157,16 +177,20 @@
       <label for="countryCode">Country Code</label>
       <select class="form-control" id="countryCode" required>
         <option value="AU">AU - Australia</option>
-        <option value="DK">DK - Denmark</option>
-        <option value="FR">FR - France</option>
         <option value="DE">DE - Germany</option>
-        <option value="IT">IT - Italy</option>
+        <option value="DK">DK - Denmark</option>
+        <option value="ES">ES - Spain</option>
+        <option value="FR">FR - France</option>
+        <option value="GB">GB - United Kingdom</option>
         <option value="IE">IE - Ireland</option>
+        <option value="IT">IT - Italy</option>
         <option value="NL">NL - Netherlands</option>
+        <option value="NO">NO - Norway</option>
+        <option value="PL">PL - Poland</option>
         <option value="SE">SE - Sweden</option>
-        <option value="UK">UK - United Kingdom</option>
         <option value="US" selected>US - United States</option>
       </select>
+    </div>
     </div>
     
     <div class="form-group">
@@ -192,13 +216,6 @@
       </div>
       
       <div class="form-group">
-        <label for="apiKey">Developer API Key</label>
-        <input type="text" class="form-control" id="apiKey" placeholder="optional" pattern="[A-Za-z0-9_-]{1,128}">
-        <small style="color: #6c757d;">Generated in the Omlet developer console at smart.omlet.com/developers. If set, this is used instead of your email address and password.</small>
-        <div class="field-error" id="apiKeyError"></div>
-      </div>
-      
-      <div class="form-group">
         <label for="manualToken">API Token</label>
         <input type="text" class="form-control" id="manualToken" placeholder="optional, will be auto-discovered" pattern="[a-zA-Z0-9]{1,64}">
         <small style="color: #6c757d;">Provide API token instead of email address and password, if desired.</small>
@@ -208,7 +225,7 @@
       <div class="form-group">
         <label for="manualDeviceId">Device ID</label>
         <input type="text" class="form-control" id="manualDeviceId" placeholder="optional, will be auto-discovered" pattern="[a-zA-Z0-9]{1,32}">
-        <small style="color: #6c757d;">Provide Device ID to skip coop door auto-discovery, or to specify a coop door if you have multiple doors.</small>
+        <small style="color: #6c757d;">Advanced. Not normally needed - your coop door is found automatically.</small>
         <div class="field-error" id="manualDeviceIdError"></div>
       </div>
       
@@ -299,7 +316,9 @@ function togglePasswordVisibility() {
     document.getElementById('email').value = currentConfig.email;
   }
   if (currentConfig.countryCode) {
-    document.getElementById('countryCode').value = currentConfig.countryCode;
+    // Omlet uses GB, not UK. Older configs may still hold UK.
+    const cc = currentConfig.countryCode === 'UK' ? 'GB' : currentConfig.countryCode;
+    document.getElementById('countryCode').value = cc;
   }
   
   // Pre-fill advanced settings
@@ -336,7 +355,7 @@ function togglePasswordVisibility() {
       platform: 'OmletCoop',
       email: document.getElementById('email').value.trim() || undefined,
       countryCode: document.getElementById('countryCode').value,
-      apiKey: document.getElementById('apiKey').value.trim() || undefined,
+      apiKey: selectedMethod() === 'key' ? (document.getElementById('apiKey').value.trim() || undefined) : undefined,
       bearerToken: document.getElementById('manualToken').value.trim() || undefined,
       deviceId: document.getElementById('manualDeviceId').value.trim() || undefined,
       enableLight: document.getElementById('enableLight').checked,
@@ -391,6 +410,44 @@ function togglePasswordVisibility() {
   function hideStatus() {
     document.getElementById('statusMessage').classList.add('hidden');
   }
+  
+  // Auth method selector. Both methods are first-class; the key is listed first
+  // because it is the officially supported one.
+  function selectedMethod() {
+    const checked = document.querySelector('input[name="authMethod"]:checked');
+    return checked ? checked.value : 'key';
+  }
+  
+  function applyMethod() {
+    const method = selectedMethod();
+    document.getElementById('methodKey').classList.toggle('hidden', method !== 'key');
+    document.getElementById('methodAccount').classList.toggle('hidden', method === 'key');
+    document.getElementById('loginButton').textContent = method === 'key' ? 'Validate Key' : 'Login';
+  }
+  
+  // Open on whichever method is already configured. A fresh install starts on the key.
+  (function initMethod() {
+    let method = 'key';
+    
+    if (!currentConfig.apiKey && (currentConfig.email || currentConfig.password || currentConfig.bearerToken)) {
+      method = 'account';
+    }
+    
+    const radio = document.querySelector('input[name="authMethod"][value="' + method + '"]');
+    if (radio) {
+      radio.checked = true;
+    }
+    
+    applyMethod();
+  })();
+  
+  document.querySelectorAll('input[name="authMethod"]').forEach((radio) => {
+    radio.addEventListener('change', () => {
+      hideStatus();
+      applyMethod();
+      updateConfigFromForm();
+    });
+  });
   
   // Check the saved session on open, so an expired token is surfaced here rather
   // than only as "No Response" in the Home app. Runs server-side: the token is
@@ -657,7 +714,11 @@ function togglePasswordVisibility() {
     try {
       // === API KEY: authenticates directly, so there is no login step and no
       // token to store. Validate it, discover the device, save, and stop here. ===
-      if (apiKey) {
+      if (selectedMethod() === 'key') {
+        if (!apiKey) {
+          throw new Error('Enter your developer API key, or switch to the Omlet account method.');
+        }
+        
         showStatus('Validating API key...', 'info');
         loginButton.textContent = 'Validating...';
         
@@ -687,11 +748,6 @@ function togglePasswordVisibility() {
         
         if (email) {
           keyConfig.email = email;
-        }
-        
-        // Kept so switching to a key does not silently discard a token the user typed
-        if (manualToken) {
-          keyConfig.bearerToken = manualToken;
         }
         
         if (apiServer && apiServer !== 'x107.omlet.co.uk') {
