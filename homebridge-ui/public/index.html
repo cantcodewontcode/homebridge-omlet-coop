@@ -122,6 +122,16 @@
     margin-top: 4px;
     display: none;
   }
+  .method-note {
+    margin-top: 18px;
+    padding: 12px 14px;
+    background: #f8f9fa;
+    border-radius: 6px;
+    color: #6c757d;
+    font-size: 0.9em;
+    line-height: 1.45;
+  }
+  
   .field-error.show {
     display: block;
   }
@@ -129,11 +139,17 @@
 
 <div class="card">
   <h3>Omlet Coop Setup</h3>
-  <p>Choose how you would like to connect, then click the button at the bottom.</p>
+  <p id="setupIntro">Choose how you would like to connect, then click the button at the bottom.</p>
   
   <div id="statusMessage" class="hidden"></div>
   
+  <div id="connectedPanel" class="hidden">
+    <div id="connectedDetails" style="padding: 15px; background: #f8f9fa; border-radius: 6px; margin-bottom: 15px;"></div>
+    <button id="disconnectButton" class="btn" style="background: #6c757d; color: #fff;">Disconnect and set up again</button>
+  </div>
+  
   <div id="loginForm">
+    <div id="setupPanel">
     <div class="form-group">
       <label style="display: block; margin-bottom: 8px;">Connection Method</label>
       <label style="display: block; font-weight: normal; margin-bottom: 6px;">
@@ -148,9 +164,10 @@
       <div class="form-group">
         <label for="bearerToken">Developer API Key</label>
         <input type="text" class="form-control" id="bearerToken" placeholder="paste your key here" pattern="[A-Za-z0-9_-]{1,128}">
-        <small style="color: #6c757d;">Generate one at <a href="https://smart.omlet.com/developers/login" target="_blank" rel="noopener">smart.omlet.com/developers/login</a> under <strong>API Keys</strong>. Officially supported by Omlet, can be revoked whenever you like, and no password is entered here.</small>
         <div class="field-error" id="bearerTokenError"></div>
       </div>
+      
+      <p class="method-note">Recommended by Omlet. Generate an API key at <a href="https://smart.omlet.com/developers/login" target="_blank" rel="noopener">smart.omlet.com/developers/login</a>. Keys can be revoked via the Omlet developer portal</p>
     </div>
     
     <div id="methodAccount" class="hidden">
@@ -176,21 +193,25 @@
     <div class="form-group">
       <label for="countryCode">Country Code</label>
       <select class="form-control" id="countryCode" required>
-        <option value="AU">AU - Australia</option>
-        <option value="DE">DE - Germany</option>
-        <option value="DK">DK - Denmark</option>
-        <option value="ES">ES - Spain</option>
-        <option value="FR">FR - France</option>
-        <option value="GB">GB - United Kingdom</option>
-        <option value="IE">IE - Ireland</option>
-        <option value="IT">IT - Italy</option>
-        <option value="NL">NL - Netherlands</option>
-        <option value="NO">NO - Norway</option>
-        <option value="PL">PL - Poland</option>
-        <option value="SE">SE - Sweden</option>
-        <option value="US" selected>US - United States</option>
+        <option value="AU">Australia</option>
+        <option value="DK">Denmark</option>
+        <option value="FR">France</option>
+        <option value="DE">Germany</option>
+        <option value="IE">Ireland</option>
+        <option value="IT">Italy</option>
+        <option value="NL">Netherlands</option>
+        <option value="NO">Norway</option>
+        <option value="PL">Poland</option>
+        <option value="ES">Spain</option>
+        <option value="SE">Sweden</option>
+        <option value="GB">United Kingdom</option>
+        <option value="US" selected>United States</option>
       </select>
     </div>
+    
+    <p class="method-note">Mimics the Omlet mobile app for authentication. Email address and password are used to obtain API key and are not saved.</p>
+    </div>
+    
     </div>
     
     <!-- Advanced Settings Section -->
@@ -204,43 +225,42 @@
       <div class="form-group">
         <label for="apiServer">API Server</label>
         <input type="text" class="form-control" id="apiServer" placeholder="x107.omlet.co.uk" pattern="[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*">
-        <small style="color: #6c757d;">Default: x107.omlet.co.uk</small>
         <div class="field-error" id="apiServerError"></div>
       </div>
       
       <div class="form-group">
         <label for="manualDeviceId">Device ID</label>
         <input type="text" class="form-control" id="manualDeviceId" placeholder="optional, will be auto-discovered" pattern="[a-zA-Z0-9]{1,32}">
-        <small style="color: #6c757d;">Advanced. Not normally needed - your coop door is found automatically.</small>
         <div class="field-error" id="manualDeviceIdError"></div>
       </div>
       
       <div class="form-group">
         <label for="pollInterval">Poll Interval (seconds)</label>
         <input type="number" class="form-control" id="pollInterval" placeholder="30" min="30" max="300" step="1">
-        <small style="color: #6c757d;">How often to check device status (30-300 seconds)</small>
         <div class="field-error" id="pollIntervalError"></div>
       </div>
       
       <div class="form-group">
-        <label>
-          <input type="checkbox" id="enableLight" checked> Enable Coop Light Accessory
-        </label>
-        <small style="color: #6c757d;">Uncheck if you do not have the Omlet coop light module</small>
+        <label for="enableLight">Coop Light Accessory</label>
+        <select class="form-control" id="enableLight">
+          <option value="auto" selected>Auto-discover</option>
+          <option value="off">Do not display</option>
+        </select>
+      </div>
+      
+      <div class="form-group">
+        <label for="enableBattery">Battery Status</label>
+        <select class="form-control" id="enableBattery">
+          <option value="auto" selected>Automatic by power type</option>
+          <option value="on">Always show</option>
+          <option value="off">Always hide</option>
+        </select>
       </div>
       
       <div class="form-group">
         <label>
-          <input type="checkbox" id="enableBattery"> Enable Battery Status
+          <input type="checkbox" id="debugMode"> Enable Debug logging mode
         </label>
-        <small style="color: #6c757d;">Show battery level in Homebridge and third-party HomeKit apps (not visible in Apple Home app)</small>
-      </div>
-      
-      <div class="form-group">
-        <label>
-          <input type="checkbox" id="debugMode"> Enable Debug Mode
-        </label>
-        <small style="color: #6c757d;">Enable detailed logging for troubleshooting</small>
       </div>
     </div>
     
@@ -248,7 +268,6 @@
   </div>
   
   <div id="devicesSection" class="hidden">
-    <h4>Discovered Devices</h4>
     <div id="deviceList" class="device-list"></div>
   </div>
 </div>
@@ -291,6 +310,18 @@ function togglePasswordVisibility() {
 }
 
 (async () => {
+  // A thrown error during setup stops the rest of this script running - including
+  // the Login button's handler - which looks exactly like "the button does nothing".
+  // Surface it instead of failing silently.
+  window.addEventListener('error', (event) => {
+    try {
+      const box = document.getElementById('statusMessage');
+      box.className = 'status-message status-error';
+      box.textContent = 'Settings UI error: ' + event.message + ' - please report this.';
+      box.classList.remove('hidden');
+    } catch (ignored) { /* nothing more we can do */ }
+  });
+  
   let currentConfig = null;
   let discoveredToken = null;
   let discoveredDevices = [];
@@ -305,9 +336,6 @@ function togglePasswordVisibility() {
   }
   
   // Pre-fill form if we have existing config
-  if (currentConfig.email) {
-    document.getElementById('email').value = currentConfig.email;
-  }
   if (currentConfig.countryCode) {
     // Omlet uses GB, not UK. Older configs may still hold UK.
     const cc = currentConfig.countryCode === 'UK' ? 'GB' : currentConfig.countryCode;
@@ -330,12 +358,17 @@ function togglePasswordVisibility() {
   if (currentConfig.debug) {
     document.getElementById('debugMode').checked = currentConfig.debug;
   }
-  if (currentConfig.enableLight !== undefined) {
-    document.getElementById('enableLight').checked = currentConfig.enableLight;
-  }
-  if (currentConfig.enableBattery !== undefined) {
-    document.getElementById('enableBattery').checked = currentConfig.enableBattery;
-  }
+  // Older configs hold booleans; those are explicit overrides, not "auto".
+  const toTriState = (value) => {
+    if (value === undefined || value === null || value === '' || value === 'auto') {
+      return 'auto';
+    }
+    return (value === true || value === 'true' || value === 'on') ? 'on' : 'off';
+  };
+  // "on" is no longer an option for the light - fall back to auto-discovery
+  const lightPref = toTriState(currentConfig.enableLight);
+  document.getElementById('enableLight').value = (lightPref === 'on') ? 'auto' : lightPref;
+  document.getElementById('enableBattery').value = toTriState(currentConfig.enableBattery);
   
   // Auto-update config when form fields change (so built-in Save button works)
   async function updateConfigFromForm() {
@@ -345,12 +378,12 @@ function togglePasswordVisibility() {
       platform: 'OmletCoop',
       email: document.getElementById('email').value.trim() || undefined,
       countryCode: document.getElementById('countryCode').value,
-      bearerToken: selectedMethod() === 'key'
-        ? (document.getElementById('bearerToken').value.trim() || undefined)
-        : (currentConfig.bearerToken || undefined),
+      authMethod: selectedMethod(),
+      email: undefined,
+      bearerToken: undefined,
       deviceId: document.getElementById('manualDeviceId').value.trim() || undefined,
-      enableLight: document.getElementById('enableLight').checked,
-      enableBattery: document.getElementById('enableBattery').checked,
+      enableLight: document.getElementById('enableLight').value,
+      enableBattery: document.getElementById('enableBattery').value,
       debug: document.getElementById('debugMode').checked
     };
     
@@ -361,10 +394,7 @@ function togglePasswordVisibility() {
     }
     
     // Only include pollInterval if user explicitly set it (not empty)
-    const pollIntervalValue = document.getElementById('pollInterval').value.trim();
-    if (pollIntervalValue) {
-      updatedConfig.pollInterval = parseInt(pollIntervalValue);
-    }
+    updatedConfig.pollInterval = safePollInterval(document.getElementById('pollInterval').value);
     
     // Remove undefined values to keep config clean
     Object.keys(updatedConfig).forEach(key => {
@@ -388,11 +418,30 @@ function togglePasswordVisibility() {
   document.getElementById('enableBattery').addEventListener('change', updateConfigFromForm);
   document.getElementById('debugMode').addEventListener('change', updateConfigFromForm);
   
-  // Show status message
-  function showStatus(message, type) {
+  // Blank or out of range is never written through - it always becomes a usable
+  // value, because the plugin would clamp it anyway and a stale number in config
+  // is worse than a corrected one.
+  function safePollInterval(raw) {
+    const parsed = parseInt(String(raw).trim(), 10);
+    
+    if (isNaN(parsed)) {
+      return 30;
+    }
+    
+    return Math.min(300, Math.max(30, parsed));
+  }
+  
+  // Show status message. `html` is only ever used with strings we control.
+  function showStatus(message, type, html) {
     const statusDiv = document.getElementById('statusMessage');
     statusDiv.className = `status-message status-${type}`;
-    statusDiv.textContent = message;
+    
+    if (html) {
+      statusDiv.innerHTML = message;
+    } else {
+      statusDiv.textContent = message;
+    }
+    
     statusDiv.classList.remove('hidden');
   }
   
@@ -415,11 +464,16 @@ function togglePasswordVisibility() {
     document.getElementById('loginButton').textContent = 'Login';
   }
   
-  // Open on whichever method is already configured. A fresh install starts on the key.
+  // Reopen on the method actually used last time. Both methods store the same
+  // bearerToken, so the config is otherwise identical - authMethod is what tells
+  // them apart. A fresh install, or an older config without it, starts on the key.
   (function initMethod() {
     let method = 'key';
     
-    if (currentConfig.email || currentConfig.password) {
+    if (currentConfig.authMethod === 'account' || currentConfig.authMethod === 'key') {
+      method = currentConfig.authMethod;
+    } else if (currentConfig.password) {
+      // Pre-dates authMethod: only the account flow ever wrote a password
       method = 'account';
     }
     
@@ -442,6 +496,88 @@ function togglePasswordVisibility() {
   // Check the saved session on open, so an expired token is surfaced here rather
   // than only as "No Response" in the Home app. Runs server-side: the token is
   // never sent to the browser.
+  function showSetupView() {
+    document.getElementById('connectedPanel').classList.add('hidden');
+    document.getElementById('setupPanel').classList.remove('hidden');
+    document.getElementById('loginButton').classList.remove('hidden');
+    document.getElementById('setupIntro').classList.remove('hidden');
+  }
+  
+  // While a working credential is stored there is nothing to choose, so the method
+  // radios only get in the way. Show what we are connected to, and one way out.
+  function showConnectedView(result) {
+    const device = (result.devices && result.devices[0]) || null;
+    const method = (currentConfig.authMethod === 'account')
+      ? 'Omlet account'
+      : 'Developer API key';
+    
+    let html = `<p style="margin-top: 0;"><strong style="color: #28a745;">Connected to Omlet</strong></p>`;
+    html += `<p style="margin-bottom: 4px;"><strong>Method:</strong> ${method}</p>`;
+    
+    if (device) {
+      html += `<p style="margin-bottom: 4px;"><strong>Coop door:</strong> ${device.name}</p>`;
+      if (device.lightEquipped !== undefined) {
+        html += `<p style="margin-bottom: 4px;"><strong>Coop light:</strong> ${device.lightEquipped ? 'detected' : 'not fitted'}</p>`;
+      }
+      if (device.powerSource) {
+        const onMains = device.powerSource.toLowerCase() === 'external';
+        const level = (!onMains && device.batteryLevel !== null && device.batteryLevel !== undefined) ? ` (${device.batteryLevel}%)` : '';
+        html += `<p style="margin-bottom: 4px;"><strong>Power:</strong> ${onMains ? 'mains' : 'battery' + level}</p>`;
+      }
+      if (device.firmware) {
+        html += `<p style="margin-bottom: 0;"><strong>Firmware:</strong> ${device.firmware}</p>`;
+      }
+    }
+    
+    document.getElementById('connectedDetails').innerHTML = html;
+    document.getElementById('connectedPanel').classList.remove('hidden');
+    document.getElementById('setupPanel').classList.add('hidden');
+    document.getElementById('loginButton').classList.add('hidden');
+    document.getElementById('setupIntro').classList.add('hidden');
+  }
+  
+  document.getElementById('disconnectButton').addEventListener('click', async () => {
+    if (!confirm('Remove the saved credentials? You will need to log in again.')) {
+      return;
+    }
+    
+    const button = document.getElementById('disconnectButton');
+    button.disabled = true;
+    
+    try {
+      await homebridge.request('/forget', {});
+      
+      // Clear anything left in config too, so nothing can quietly reconnect.
+      const cleared = JSON.parse(JSON.stringify(currentConfig || {}));
+      delete cleared.bearerToken;
+      delete cleared.email;
+      delete cleared.password;
+      cleared.platform = 'OmletCoop';
+      await homebridge.updatePluginConfig([cleared]);
+      currentConfig = cleared;
+      
+      // Reopen on whichever method they were using.
+      const previous = (currentConfig.authMethod === 'account') ? 'account' : 'key';
+      const radio = document.querySelector('input[name="authMethod"][value="' + previous + '"]');
+      if (radio) {
+        radio.checked = true;
+      }
+      applyMethod();
+      
+      document.getElementById('bearerToken').value = '';
+      document.getElementById('password').value = '';
+      document.getElementById('devicesSection').classList.add('hidden');
+      
+      showSetupView();
+      showStatus('Credentials removed. Set up again below, then click Save.', 'info');
+    } catch (error) {
+      console.error('Forget failed:', error);
+      showStatus('Could not remove the saved credentials: ' + error.message, 'error');
+    } finally {
+      button.disabled = false;
+    }
+  });
+  
   async function checkSessionStatus() {
     try {
       const result = await homebridge.request('/session-status', {
@@ -454,8 +590,7 @@ function togglePasswordVisibility() {
       }
       
       if (result.state === 'valid') {
-        const count = result.deviceCount || 0;
-        showStatus(`Connected to Omlet. ${count} device${count === 1 ? '' : 's'} found.`, 'success');
+        showConnectedView(result);
         return;
       }
       
@@ -548,15 +683,13 @@ function togglePasswordVisibility() {
         }
         break;
         
-      case 'manualToken':
-        const tokenRegex = /^[a-zA-Z0-9]{1,64}$/;
+      case 'bearerToken':
+        const tokenRegex = /^[A-Za-z0-9_\-]{1,128}$/;
         isValid = tokenRegex.test(value);
-        if (value.length > 64) {
-          errorMsg = 'Token must be 64 characters or less';
-        } else if (!/^[a-zA-Z0-9]+$/.test(value)) {
-          errorMsg = 'Token must be alphanumeric only';
+        if (value.length > 128) {
+          errorMsg = 'API key must be 128 characters or less';
         } else {
-          errorMsg = 'Invalid token format';
+          errorMsg = 'API key may only contain letters, digits, underscores and hyphens';
         }
         break;
         
@@ -605,7 +738,7 @@ function togglePasswordVisibility() {
   // Add blur event listeners for real-time validation
   document.getElementById('email').addEventListener('blur', () => validateField('email'));
   document.getElementById('apiServer').addEventListener('blur', () => validateField('apiServer'));
-  document.getElementById('manualToken').addEventListener('blur', () => validateField('manualToken'));
+  document.getElementById('bearerToken').addEventListener('blur', () => validateField('bearerToken'));
   document.getElementById('manualDeviceId').addEventListener('blur', () => validateField('manualDeviceId'));
   document.getElementById('pollInterval').addEventListener('blur', () => validateField('pollInterval'));
   
@@ -634,11 +767,11 @@ function togglePasswordVisibility() {
     }
   });
   
-  document.getElementById('manualToken').addEventListener('input', () => {
-    const field = document.getElementById('manualToken');
-    const errorDiv = document.getElementById('manualTokenError');
+  document.getElementById('bearerToken').addEventListener('input', () => {
+    const field = document.getElementById('bearerToken');
+    const errorDiv = document.getElementById('bearerTokenError');
     if (field.value.trim()) {
-      setTimeout(() => validateField('manualToken'), 500);
+      setTimeout(() => validateField('bearerToken'), 500);
     } else {
       field.style.borderColor = '';
       errorDiv.classList.remove('show');
@@ -681,8 +814,8 @@ function togglePasswordVisibility() {
     const apiServer = document.getElementById('apiServer').value.trim() || 'x107.omlet.co.uk';
     const pollInterval = parseInt(document.getElementById('pollInterval').value) || 30;
     const debugMode = document.getElementById('debugMode').checked;
-    const enableLight = document.getElementById('enableLight').checked;
-    const enableBattery = document.getElementById('enableBattery').checked;
+    const enableLight = document.getElementById('enableLight').value;
+    const enableBattery = document.getElementById('enableBattery').value;
     
     const loginButton = document.getElementById('loginButton');
     
@@ -724,38 +857,44 @@ function togglePasswordVisibility() {
         const keyConfig = {
           name: currentConfig.name || 'Omlet Coop',
           platform: 'OmletCoop',
+          authMethod: 'key',
           countryCode: countryCode,
-          bearerToken: devKey,
           enableLight: enableLight,
           enableBattery: enableBattery,
           debug: debugMode
         };
         
-        if (email) {
-          keyConfig.email = email;
-        }
         
         if (apiServer && apiServer !== 'x107.omlet.co.uk') {
           keyConfig.apiServer = apiServer;
         }
         
-        if (pollInterval && pollInterval !== 30) {
-          keyConfig.pollInterval = pollInterval;
-        }
+        keyConfig.pollInterval = safePollInterval(document.getElementById('pollInterval').value);
         
         let keyMessage;
         
         if (manualDeviceId && keyResult.deviceValid) {
           keyConfig.deviceId = manualDeviceId;
-          keyMessage = 'API key and Device ID validated successfully!';
+          keyMessage = 'API key and Device ID validated.';
         } else if (manualDeviceId) {
-          keyMessage = `Invalid device ID. Using discovered device instead: ${keyResult.devices[0].name}`;
+          keyMessage = 'API key validated. That Device ID was not found, so the discovered device below will be used.';
         } else {
-          keyMessage = `API key validated. Found ${keyResult.devices.length} device(s): ${keyResult.devices[0].name}`;
+          keyMessage = 'API key validated.';
         }
         
         discoveredDevices = keyResult.devices;
         displayDevices(discoveredDevices);
+        
+        // Storage is where the credential lives; config.json never sees it.
+        try {
+          await homebridge.request('/persist-token', {
+            token: devKey,
+            deviceId: (manualDeviceId && keyResult.deviceValid) ? manualDeviceId : (keyResult.devices[0] && keyResult.devices[0].deviceId) || null
+          });
+        } catch (persistError) {
+          console.error('Token persist error:', persistError);
+          throw new Error('Key is valid, but it could not be saved: ' + persistError.message);
+        }
         
         try {
           await homebridge.updatePluginConfig([JSON.parse(JSON.stringify(keyConfig))]);
@@ -764,7 +903,7 @@ function togglePasswordVisibility() {
           throw new Error('Failed to update config: ' + configError.message);
         }
         
-        showStatus(keyMessage + ' Click "Save" to apply changes.', 'success');
+        showStatus(keyMessage + ' Click <strong>Save</strong> to apply changes.', 'success', true);
         loginButton.textContent = 'Login Successful ✓';
         loginButton.disabled = false;
         return;
@@ -986,6 +1125,7 @@ function togglePasswordVisibility() {
       const newConfig = {
         name: currentConfig.name || 'Omlet Coop',
         platform: 'OmletCoop',
+        authMethod: 'account',
         countryCode: countryCode,
         enableLight: enableLight,
         enableBattery: enableBattery,
@@ -998,17 +1138,10 @@ function togglePasswordVisibility() {
       }
       
       // Only include pollInterval if user explicitly set it (not empty/blank)
-      if (pollInterval && pollInterval !== 30) {
-        newConfig.pollInterval = pollInterval;
-      }
+      newConfig.pollInterval = safePollInterval(document.getElementById('pollInterval').value);
       
-      // The token goes in config.json, the same place the API key lives, so both
-      // methods behave identically and the user can see what they are holding.
-      if (finalToken) {
-        newConfig.bearerToken = finalToken;
-      } else {
-        delete newConfig.bearerToken;
-      }
+      // The credential is written to the Homebridge storage directory, not here.
+      delete newConfig.bearerToken;
       
       // Save deviceId to config ONLY if user manually provided it (not auto-discovered)
       if (hasDeviceId && finalDeviceId === manualDeviceId) {
@@ -1019,24 +1152,32 @@ function togglePasswordVisibility() {
         delete newConfig.deviceId;
       }
       
-      // The password is NEVER written to config.json. The email is kept only so the
-      // form can be pre-filled; the token is what authenticates.
-      if (shouldSaveCredentials && email) {
-        newConfig.email = email;
-      } else {
-        delete newConfig.email;
-      }
+      // Neither the password nor the email address is written to config.json.
+      // The token is what authenticates; an email address on disk is needless PII.
+      delete newConfig.email;
       delete newConfig.password;
       
       // Debug: Log what we're about to save
       console.log('Saving config:', JSON.stringify(newConfig, null, 2));
+      
+      if (finalToken) {
+        try {
+          await homebridge.request('/persist-token', {
+            token: finalToken,
+            deviceId: finalDeviceId || null
+          });
+        } catch (persistError) {
+          console.error('Token persist error:', persistError);
+          throw new Error('Logged in, but the credential could not be saved: ' + persistError.message);
+        }
+      }
       
       try {
         // Ensure config is JSON-serializable (fixes clone errors)
         const serializableConfig = JSON.parse(JSON.stringify(newConfig));
         await homebridge.updatePluginConfig([serializableConfig]);
         currentConfig = serializableConfig;
-        showStatus('Login successful! Click "Save" to apply changes.', 'success');
+        showStatus('Login successful. Click <strong>Save</strong> to apply changes.', 'success', true);
         loginButton.textContent = 'Login Successful ✓';
         loginButton.disabled = false;
       } catch (configError) {
@@ -1062,10 +1203,32 @@ function togglePasswordVisibility() {
     devices.forEach((device, index) => {
       const deviceDiv = document.createElement('div');
       deviceDiv.className = 'device-item';
+      // Show what auto-detection sees, so "why is there no light accessory?" is
+      // answerable here rather than from the logs.
+      const light = device.lightEquipped === undefined
+        ? ''
+        : `<p><strong>Coop light:</strong> ${device.lightEquipped ? 'detected' : 'not fitted'}</p>`;
+      
+      let power = '';
+      if (device.powerSource) {
+        const onMains = device.powerSource.toLowerCase() === 'external';
+        const level = (!onMains && device.batteryLevel !== null && device.batteryLevel !== undefined)
+          ? ` (${device.batteryLevel}%)`
+          : '';
+        power = `<p><strong>Power:</strong> ${onMains ? 'mains' : 'battery' + level}</p>`;
+      }
+      
+      const firmware = device.firmware
+        ? `<p><strong>Firmware:</strong> ${device.firmware}</p>`
+        : '';
+      
       deviceDiv.innerHTML = `
         <h4>${device.name}</h4>
         <p><strong>Device ID:</strong> ${device.deviceId}</p>
         <p><strong>Type:</strong> ${device.type}</p>
+        ${light}
+        ${power}
+        ${firmware}
         ${index === 0 ? '<p style="color: #28a745; font-weight: 500;">✓ This device will be used</p>' : ''}
       `;
       deviceList.appendChild(deviceDiv);

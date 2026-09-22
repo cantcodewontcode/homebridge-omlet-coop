@@ -13,24 +13,73 @@ class OmletPluginUiServer extends HomebridgePluginUiServer {
     this.onRequest('/discover', this.handleDiscover.bind(this));
     this.onRequest('/validate', this.handleValidate.bind(this));
     this.onRequest('/session-status', this.handleSessionStatus.bind(this));
+    this.onRequest('/persist-token', this.handlePersistToken.bind(this));
+    this.onRequest('/forget', this.handleForget.bind(this));
     
     this.ready();
   }
   
-  readStoredCredentials() {
+  tokenFilePath() {
     if (!this.homebridgeStoragePath) {
-      return null;
+      throw new RequestError('Homebridge storage path is unavailable', { status: 500 });
     }
     
-    const file = path.join(this.homebridgeStoragePath, TOKEN_FILE);
-    
+    return path.join(this.homebridgeStoragePath, TOKEN_FILE);
+  }
+  
+  readStoredCredentials() {
     try {
+      const file = this.tokenFilePath();
+      
       if (!fs.existsSync(file)) {
         return null;
       }
+      
       return JSON.parse(fs.readFileSync(file, 'utf8'));
     } catch (error) {
       return null;
+    }
+  }
+  
+  // The credential lives in the Homebridge storage directory, not config.json.
+  async handlePersistToken(payload) {
+    const { token, deviceId } = payload || {};
+    
+    if (!token) {
+      throw new RequestError('Token is required', { status: 400 });
+    }
+    
+    const data = {
+      bearerToken: token,
+      lastUpdated: new Date().toISOString()
+    };
+    
+    if (deviceId) {
+      data.deviceId = deviceId;
+    }
+    
+    try {
+      fs.writeFileSync(this.tokenFilePath(), JSON.stringify(data, null, 2));
+      return { success: true };
+    } catch (error) {
+      throw new RequestError(`Failed to save credentials: ${error.message}`, { status: 500 });
+    }
+  }
+  
+  // Deleting the stored credential is the only way to genuinely reset the plugin -
+  // removing the config block alone leaves this file behind and the plugin still
+  // connected, which is confusing rather than helpful.
+  async handleForget() {
+    try {
+      const file = this.tokenFilePath();
+      
+      if (fs.existsSync(file)) {
+        fs.unlinkSync(file);
+      }
+      
+      return { success: true };
+    } catch (error) {
+      throw new RequestError(`Failed to remove credentials: ${error.message}`, { status: 500 });
     }
   }
   
@@ -40,16 +89,19 @@ class OmletPluginUiServer extends HomebridgePluginUiServer {
   async handleSessionStatus(payload) {
     const { bearerToken, debug } = payload || {};
     
-    // config.json is authoritative; storage is the fallback for older installs
-    let token = bearerToken || null;
-    let source = token ? 'config' : null;
+    // Storage holds the live credential; a token in config.json is a bootstrap value
+    // the plugin has not consumed yet.
+    let token = null;
+    let source = null;
     
-    if (!token) {
-      const stored = this.readStoredCredentials();
-      if (stored && stored.bearerToken) {
-        token = stored.bearerToken;
-        source = 'storage';
-      }
+    const stored = this.readStoredCredentials();
+    
+    if (stored && stored.bearerToken) {
+      token = stored.bearerToken;
+      source = 'storage';
+    } else if (bearerToken) {
+      token = bearerToken;
+      source = 'config';
     }
     
     if (!token) {
@@ -58,7 +110,7 @@ class OmletPluginUiServer extends HomebridgePluginUiServer {
     
     try {
       const devices = await this.discoverOmletDevices(token, debug);
-      return { state: 'valid', source: source, deviceCount: devices.length };
+      return { state: 'valid', source: source, deviceCount: devices.length, devices: devices };
     } catch (error) {
       // Only 401/403 means the credential is dead. A network failure is not an
       // expired session and must not be reported as one.
@@ -300,7 +352,12 @@ class OmletPluginUiServer extends HomebridgePluginUiServer {
                 const devices = devicesArray.map(device => ({
                   deviceId: device.deviceId,
                   name: device.name || 'Unknown Device',
-                  type: device.deviceType || 'Unknown'
+                  type: device.deviceType || 'Unknown',
+                  // Surfaced so the settings page can show what auto-detection sees
+                  lightEquipped: Number(device.configuration?.light?.equipped) > 0,
+                  powerSource: device.state?.general?.powerSource || null,
+                  batteryLevel: device.state?.general?.batteryLevel ?? null,
+                  firmware: device.state?.general?.firmwareVersionCurrent || null
                 }));
                 if (debug) {
                   console.log('✓ Devices extracted:', devices.length);

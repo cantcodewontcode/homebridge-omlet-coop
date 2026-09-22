@@ -37,6 +37,13 @@
         "default": "x107.omlet.co.uk",
         "description": "Omlet API server hostname (default is x107.omlet.co.uk)"
       },
+      "authMethod": {
+        "title": "Connection Method",
+        "type": "string",
+        "default": "key",
+        "enum": ["key", "account"],
+        "description": "Which setup method the plugin settings page should open on. Set automatically; not used at runtime."
+      },
       "bearerToken": {
         "title": "Developer API Key",
         "type": "string",
@@ -62,16 +69,23 @@
         "description": "Enable detailed logging for troubleshooting"
       },
       "enableLight": {
-        "title": "Enable Coop Light Accessory",
-        "type": "boolean",
-        "default": true,
-        "description": "Enable control of the Omlet Coop Light (only check if you have the light module installed)"
+        "title": "Coop Light Accessory",
+        "type": "string",
+        "default": "auto",
+        "oneOf": [
+          { "title": "Auto-discover", "enum": ["auto"] },
+          { "title": "Do not display", "enum": ["off"] }
+        ]
       },
       "enableBattery": {
-        "title": "Enable Battery Status",
-        "type": "boolean",
-        "default": false,
-        "description": "Show battery level in Homebridge and third-party HomeKit apps (not visible in Apple Home app)"
+        "title": "Battery Status",
+        "type": "string",
+        "default": "auto",
+        "oneOf": [
+          { "title": "Automatic by power type", "enum": ["auto"] },
+          { "title": "Always show", "enum": ["on"] },
+          { "title": "Always hide", "enum": ["off"] }
+        ]
       }
     }
   },

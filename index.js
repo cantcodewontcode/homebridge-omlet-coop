@@ -24,6 +24,16 @@ const MAX_FAST_POLLS = 18; // ~90s at 5s, well past the ~16s a healthy door take
 const DOOR_OPEN_STATES = ['open'].concat(DOOR_OPENING_STATES);
 const DOOR_CLOSED_STATES = ['closed'].concat(DOOR_CLOSING_STATES);
 
+// HomeKit's own way of saying "not reachable". Throwing a plain Error instead makes
+// Homebridge log "This plugin threw an error from the characteristic ..." for every
+// characteristic it reads, which is noise, not information.
+function unavailable() {
+  if (hap.HapStatusError && hap.HAPStatus) {
+    return new hap.HapStatusError(hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+  }
+  return new Error('Device unavailable');
+}
+
 function mapDoorState(state) {
   if (state === 'open') {
     return hap.Characteristic.CurrentDoorState.OPEN;
@@ -60,8 +70,20 @@ class OmletCoopPlatform {
     this.pollInterval = this.validatePollInterval(config.pollInterval);
     // "auto" (the default, and what an absent setting means) lets the device decide.
     // An explicit true/false is an override and is always obeyed.
+    this.rawEnableLight = config.enableLight;
+    this.rawEnableBattery = config.enableBattery;
     this.enableLight = this.normalizeTriState(config.enableLight, 'enableLight');
+    
+    // Forcing the light on is not offered, and is not honoured if hand-edited in:
+    // publishing a Lightbulb for a module that is not fitted produces an accessory
+    // whose every command fails. Auto-discovery is the only sane "show it" option.
+    if (this.enableLight === true) {
+      this.log.warn('enableLight "on" is not supported - the coop light is auto-discovered. Using "auto".');
+      this.enableLight = 'auto';
+    }
     this.enableBattery = this.normalizeTriState(config.enableBattery, 'enableBattery');
+    this.triStateMigrated = false;
+    this.credentialsSettled = false;
     this.debug = config.debug || false;
     
     this.currentToken = null;
@@ -70,6 +92,7 @@ class OmletCoopPlatform {
     this.authFailedPermanently = false;
     this.reloginAttempts = 0;
     this.maxReloginAttempts = 3;
+    this.authFailures = 0;
     
     this.accessories = [];
     
@@ -232,17 +255,21 @@ class OmletCoopPlatform {
           const validToken = this.validateToken(data.bearerToken, 'stored bearerToken');
           if (validToken) {
             this.bearerToken = validToken;
-            this.log.info('Loaded stored API token');
+            if (this.debug) {
+              this.log.info('Loaded stored API token');
+            }
           } else {
             this.log.warn('Stored API token is invalid, ignoring');
           }
         }
         
-        if (data.deviceId) {
+        if (data.deviceId && !this.deviceId) {
           const validDeviceId = this.validateDeviceId(data.deviceId, 'stored deviceId');
           if (validDeviceId) {
             this.deviceId = validDeviceId;
-            this.log.info('Loaded stored device ID');
+            if (this.debug) {
+              this.log.info('Loaded stored device ID');
+            }
           } else {
             this.log.warn('Stored device ID is invalid, ignoring');
           }
@@ -262,58 +289,161 @@ class OmletCoopPlatform {
       };
       
       fs.writeFileSync(this.storage, JSON.stringify(data, null, 2));
-      this.log.info('Saved credentials to storage');
+      if (this.debug) {
+        this.log.info('Saved credentials to storage');
+      }
+      
+      return true;
     } catch (error) {
       this.log.error('Failed to save API token and device ID:', error.message);
+      return false;
+    }
+  }
+  
+  // config.json is a way to hand us credentials, not a place to keep them. Once a
+  // credential has actually worked and is safely in the storage directory, take it
+  // out of config along with any email and password.
+  //
+  // Order is deliberate: storage write first, purge only if it succeeded. Purging
+  // first and then failing to save would leave no working credential anywhere.
+  async settleCredentials() {
+    if (this.credentialsSettled) {
+      return;
+    }
+    
+    this.credentialsSettled = true;
+    
+    const saved = await this.saveStoredCredentials();
+    
+    if (!saved) {
+      this.log.warn('Could not save credentials to storage, leaving config.json untouched');
+      return;
+    }
+    
+    const removed = this.updateConfigBlocks((block) => {
+      let touched = false;
+      
+      ['password', 'email', 'bearerToken'].forEach((field) => {
+        if (block[field] !== undefined) {
+          delete block[field];
+          touched = true;
+        }
+      });
+      
+      return touched;
+    });
+    
+    if (removed) {
+      this.password = undefined;
+      this.email = undefined;
+      this.log.info('Credentials moved out of config.json into Homebridge storage');
     }
   }
   
   // Removes a saved password from config.json once we hold a working token.
   // API keys and bearer tokens are deliberately left untouched - only the password
   // goes, because it is the one credential we no longer need to keep.
-  scrubConfigPassword() {
+  // Applies a mutation to our own platform block(s) in config.json and writes it
+  // back atomically. Returns true if anything changed.
+  updateConfigBlocks(mutate) {
     let configPath;
     
     try {
       configPath = this.api.user.configPath();
     } catch (error) {
-      return;
+      return false;
     }
     
     try {
       if (!configPath || !fs.existsSync(configPath)) {
-        return;
+        return false;
       }
       
       const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
       
       if (!Array.isArray(config.platforms)) {
-        return;
+        return false;
       }
       
       let changed = false;
       
       config.platforms.forEach((block) => {
-        if (block && block.platform === 'OmletCoop' && block.password !== undefined) {
-          delete block.password;
+        if (block && block.platform === 'OmletCoop' && mutate(block)) {
           changed = true;
         }
       });
       
       if (!changed) {
-        return;
+        return false;
       }
       
-      // Write via a temp file so an interrupted write cannot truncate config.json
       const tmpPath = configPath + '.omlet-tmp';
       fs.writeFileSync(tmpPath, JSON.stringify(config, null, 4));
       fs.renameSync(tmpPath, configPath);
       
-      this.password = undefined;
-      this.log.info('Removed the saved password from config.json - the stored token is used instead');
-      
+      return true;
     } catch (error) {
-      this.log.warn('Could not remove the saved password from config.json:', error.message);
+      this.log.warn('Could not update config.json:', error.message);
+      return false;
+    }
+  }
+  
+  // "auto" is new. Convert the old booleans once, the first time we have real device
+  // data to compare against. A boolean means not yet migrated; a string means done.
+  migrateTriState(status) {
+    if (this.triStateMigrated) {
+      return;
+    }
+    
+    this.triStateMigrated = true;
+    
+    const lightWasBoolean = typeof this.rawEnableLight === 'boolean';
+    const batteryWasBoolean = typeof this.rawEnableBattery === 'boolean';
+    
+    if (!lightWasBoolean && !batteryWasBoolean) {
+      return;
+    }
+    
+    const equipped = status?.configuration?.light?.equipped;
+    const lightPresent = (equipped !== undefined && equipped !== null)
+      ? Number(equipped) > 0
+      : (status?.state?.light !== undefined && status?.state?.light !== null);
+    
+    const source = status?.state?.general?.powerSource;
+    const onMains = (typeof source === 'string' && source.toLowerCase() === 'external');
+    
+    const next = {};
+    
+    if (lightWasBoolean) {
+      // Only an explicit "off" on a door that HAS a light is a real decision that
+      // auto would contradict. "on" was the old default, so it carries no intent.
+      next.enableLight = (this.rawEnableLight === false && lightPresent) ? 'off' : 'auto';
+    }
+    
+    if (batteryWasBoolean) {
+      // Mirror image: "off" was the old default here, so only an explicit "on" on a
+      // mains-powered door is a decision worth preserving.
+      next.enableBattery = (this.rawEnableBattery === true && onMains) ? 'on' : 'auto';
+    }
+    
+    const wrote = this.updateConfigBlocks((block) => {
+      let touched = false;
+      Object.keys(next).forEach((key) => {
+        if (block[key] !== next[key]) {
+          block[key] = next[key];
+          touched = true;
+        }
+      });
+      return touched;
+    });
+    
+    Object.keys(next).forEach((key) => {
+      this[key] = this.normalizeTriState(next[key], key);
+    });
+    
+    if (wrote) {
+      const parts = Object.keys(next).map(key => `${key}: ${next[key]}`);
+      this.log.info(`Migrated settings to the new Auto options (${parts.join(', ')})`);
     }
   }
   
@@ -332,12 +462,6 @@ class OmletCoopPlatform {
       } else {
         this.log.error('Not configured. Open the Omlet Coop plugin settings and log in.');
         return;
-      }
-      
-      // Only once authentication has succeeded, so a failed login never strands
-      // the user with no password and no token.
-      if (this.password) {
-        this.scrubConfigPassword();
       }
       
       if (!this.deviceId) {
@@ -566,8 +690,18 @@ class OmletCoopPlatform {
 
     // No password is persisted, so a dead key cannot be refreshed automatically.
     // It may have been revoked in the developer console, or the login session behind
-    // it may have ended - the plugin cannot tell which, so cover both.
+    // it may have ended - the plugin cannot tell which, so cover both. A couple of
+    // failures could still be a server blip, so give it a few tries before giving up.
     if (!this.email || !this.password) {
+      this.authFailures++;
+      
+      if (this.authFailures < this.maxReloginAttempts) {
+        if (this.debug) {
+          this.log.warn(`Authentication failed (${this.authFailures}/${this.maxReloginAttempts}), will retry`);
+        }
+        return false;
+      }
+      
       this.log.error('Saved API key is no longer valid. Open the Omlet Coop plugin settings and log in again, or paste a new developer API key.');
       this.authFailedPermanently = true;
       return false;
@@ -602,17 +736,36 @@ class OmletCoopPlatform {
     this.log.info('Setting up Homebridge accessories...');
     
     const uuid = this.api.hap.uuid.generate('omlet-coop-' + this.deviceId);
-    const existingAccessory = this.accessories.find(accessory => accessory.UUID === uuid);
+    let accessory = this.accessories.find(item => item.UUID === uuid);
     
-    if (existingAccessory) {
-      this.log.info('Restoring existing accessory from cache:', existingAccessory.displayName);
-      new OmletCoopAccessory(this, existingAccessory);
-    } else {
-      this.log.info('Adding new accessory: Omlet Coop');
-      const coopAccessory = new this.api.platformAccessory('Omlet Coop', uuid);
-      new OmletCoopAccessory(this, coopAccessory);
-      this.api.registerPlatformAccessories('homebridge-omlet', 'OmletCoop', [coopAccessory]);
+    // If the coop was replaced it has a new device ID, and therefore a new UUID.
+    // Do NOT unregister and re-register in that case: that destroys the HomeKit
+    // accessory and takes the user's room, name, automations and scenes with it.
+    // Adopt the accessory we already have and quietly point it at the new device -
+    // the UUID becomes historical, which costs nothing.
+    if (!accessory && this.accessories.length > 0) {
+      accessory = this.accessories[0];
+      this.log.info('Device ID changed; keeping the existing HomeKit accessory and pointing it at the new device');
     }
+    
+    // Only genuine duplicates get removed - never the one in use.
+    const extras = this.accessories.filter(item => item !== accessory);
+    
+    if (extras.length > 0) {
+      extras.forEach(item => this.log.warn('Removing duplicate accessory:', item.displayName));
+      this.api.unregisterPlatformAccessories('homebridge-omlet', 'OmletCoop', extras);
+      this.accessories = this.accessories.filter(item => item === accessory);
+    }
+    
+    if (accessory) {
+      new OmletCoopAccessory(this, accessory);
+      return;
+    }
+    
+    this.log.info('Adding new accessory: Omlet Coop');
+    const coopAccessory = new this.api.platformAccessory('Omlet Coop', uuid);
+    new OmletCoopAccessory(this, coopAccessory);
+    this.api.registerPlatformAccessories('homebridge-omlet', 'OmletCoop', [coopAccessory]);
   }
   
   configureAccessory(accessory) {
@@ -635,8 +788,7 @@ class OmletCoopAccessory {
     this.deviceId = platform.deviceId;
     this.baseUrl = platform.baseUrl;
     this.pollInterval = platform.pollInterval;
-    this.enableLight = platform.enableLight;
-    this.enableBattery = platform.enableBattery;
+
     this.debug = platform.debug;
     
     this.accessoryInfoUpdated = false;
@@ -645,7 +797,12 @@ class OmletCoopAccessory {
     this.pollGeneration = 0;
     this.fastPollCount = 0;
     this.pendingServiceChange = { light: null, battery: null };
+    this.firstReconcileDone = false;
     this.lastFault = null;
+    this.pollingHalted = false;
+    this.queuedLightAction = null;
+    this.lightRecoveryAttempted = false;
+    this.batteryOverrideRefused = false;
     
     // serial and firmware get updated after the first successful poll
     this.accessory.getService(hap.Service.AccessoryInformation)
@@ -676,10 +833,10 @@ class OmletCoopAccessory {
     // An explicit true/false is applied immediately. Under "auto" we keep whatever
     // the cached accessory already had and let the first poll decide, so the service
     // does not flicker away and back on every restart.
-    this.applyLightService(this.enableLight === 'auto' ? this.hasLightService() : this.enableLight);
-    this.applyBatteryService(this.enableBattery === 'auto' ? this.hasBatteryService() : this.enableBattery);
+    this.applyLightService(platform.enableLight === 'auto' ? this.hasLightService() : platform.enableLight);
+    this.applyBatteryService(platform.enableBattery === 'auto' ? this.hasBatteryService() : platform.enableBattery);
     
-    this.log.info(`Coop accessory initialized (light: ${this.describePref(this.enableLight)}, battery: ${this.describePref(this.enableBattery)})`);
+    this.log.info(`Coop accessory initialized (light: ${this.describePref(platform.enableLight)}, battery: ${this.describePref(platform.enableBattery)})`);
     
     this.startPolling();
   }
@@ -711,6 +868,18 @@ class OmletCoopAccessory {
     }
     
     this.log.warn(`[Door] Door reported an unrecognised fault: "${fault}". Please report this at https://github.com/cantcodewontcode/homebridge-omlet-coop/issues`);
+  }
+  
+  // After a command, HomeKit immediately re-reads the characteristic. The getters
+  // read the cache, and the cache still holds the pre-command state until the next
+  // poll - so the control visibly snaps back before correcting itself seconds later.
+  // Record the expected pending state so reads agree with what was just asked for.
+  setCachedState(section, value) {
+    if (!this.cachedStatus || !this.cachedStatus.state || !this.cachedStatus.state[section]) {
+      return;
+    }
+    
+    this.cachedStatus.state[section].state = value;
   }
   
   describePref(pref) {
@@ -778,8 +947,8 @@ class OmletCoopAccessory {
   // than latched at discovery. Moving a coop from mains to batteries, or fitting a
   // light module, is picked up without anyone touching the config.
   desiredLight(status) {
-    if (this.enableLight !== 'auto') {
-      return this.enableLight;
+    if (this.platform.enableLight !== 'auto') {
+      return this.platform.enableLight;
     }
     
     const equipped = status?.configuration?.light?.equipped;
@@ -792,18 +961,31 @@ class OmletCoopAccessory {
   }
   
   desiredBattery(status) {
-    if (this.enableBattery !== 'auto') {
-      return this.enableBattery;
+    const count = status?.batteryCount;
+    const source = status?.state?.general?.powerSource;
+    const onMains = (typeof source === 'string' && source.toLowerCase() === 'external');
+    
+    // If the device states it is on mains with no cells fitted, there is no battery,
+    // and "Always on" cannot conjure one. A 0% tile on a mains-powered door is worse
+    // than no tile: it is wrong, and HomeKit will eventually warn about it.
+    if (onMains && count === 0) {
+      if (this.platform.enableBattery === true && !this.batteryOverrideRefused) {
+        this.batteryOverrideRefused = true;
+        this.log.warn('Battery Status is set to "Always on", but this door reports mains power with no batteries fitted, so no battery accessory is shown.');
+      }
+      return false;
     }
     
-    const count = status?.batteryCount;
+    if (this.platform.enableBattery !== 'auto') {
+      return this.platform.enableBattery;
+    }
+    
     if (typeof count === 'number' && count > 0) {
       return true;
     }
     
-    const source = status?.state?.general?.powerSource;
     if (typeof source === 'string' && source.length > 0) {
-      return source.toLowerCase() !== 'external';
+      return !onMains;
     }
     
     return false;
@@ -818,6 +1000,15 @@ class OmletCoopAccessory {
     }
     
     const pending = this.pendingServiceChange[kind];
+    
+    // On the very first reading there is nothing to debounce against - apply it now
+    // rather than making a fresh install wait a poll cycle for its accessories.
+    if (!this.firstReconcileDone) {
+      this.pendingServiceChange[kind] = null;
+      this.log.info(`${kind === 'light' ? 'Coop light' : 'Battery'} ${desired ? 'detected, adding accessory' : 'not present, no accessory added'}`);
+      apply(desired);
+      return;
+    }
     
     if (!pending || pending.desired !== desired) {
       this.pendingServiceChange[kind] = { desired: desired, count: 1 };
@@ -834,36 +1025,130 @@ class OmletCoopAccessory {
   }
   
   reconcileServices(status) {
+    const before = `${this.hasLightService()}|${this.hasBatteryService()}`;
+    
     this.reconcileService('light', this.desiredLight(status),
       () => this.hasLightService(), (v) => this.applyLightService(v));
     this.reconcileService('battery', this.desiredBattery(status),
       () => this.hasBatteryService(), (v) => this.applyBatteryService(v));
+    
+    this.firstReconcileDone = true;
+    
+    if (before !== `${this.hasLightService()}|${this.hasBatteryService()}`) {
+      // Without this the added or removed service is not published, and the tile
+      // only appears (or disappears) after the next Homebridge restart.
+      this.platform.api.updatePlatformAccessories([this.accessory]);
+    }
   }
   
   // light
   
   async getLightOn() {
+    const lightState = this.cachedStatus?.state?.light?.state;
+    
+    if (!lightState) {
+      throw unavailable();
+    }
+    
+    return (lightState === 'on' || lightState === 'onpending');
+  }
+  
+  doorIsMoving() {
+    return DOOR_TRANSITION_STATES.includes(this.cachedStatus?.state?.door?.state);
+  }
+  
+  // The coop runs one action at a time. A light command sent while the door is
+  // moving is accepted, parked in *pending, and applied at some later point of the
+  // device's choosing - which is why pressing the light mid-close appears to do
+  // nothing for a long time. Holding it here and sending it the instant the door
+  // settles gets it executed while the device is still awake.
+  async flushQueuedLight() {
+    if (!this.queuedLightAction || this.doorIsMoving()) {
+      return;
+    }
+    
+    const action = this.queuedLightAction;
+    this.queuedLightAction = null;
+    
     try {
-      if (!this.cachedStatus) {
-        await this.pollDeviceState();
-      }
-      const lightState = this.cachedStatus?.state?.light?.state;
-      if (!lightState) {
-        throw new Error('Invalid API response: missing light state');
-      }
-      return (lightState === 'on' || lightState === 'onpending');
+      await this.sendAction(action, 'Light');
+      this.log.info('[Light]', action === 'on' ? 'Turning on light' : 'Turning off light', '(door finished moving)');
+      this.setCachedState('light', action === 'on' ? 'onpending' : 'offpending');
+      this.scheduleNextPoll(FAST_POLL_MS);
     } catch (error) {
-      this.log.error('[Light] Failed to get light state:', error.message);
-      throw new Error('Failed to get light state');
+      this.log.error('[Light] Queued light command failed:', error.message);
+      
+      if (this.lightService) {
+        const actual = this.cachedStatus?.state?.light?.state;
+        this.lightService
+          .getCharacteristic(hap.Characteristic.On)
+          .updateValue(actual === 'on' || actual === 'onpending');
+      }
+    }
+  }
+  
+  // A light command sent while the coop is busy is accepted by the API - the state
+  // flips to *pending - and then dropped by the device, leaving a pending state that
+  // never resolves. Observed stuck at "onpending" for over an hour.
+  //
+  // The fix is the OPPOSITE command, not a retry. A dropped "on" means the light
+  // never came on, so sending "off" makes the reported state match reality. Retrying
+  // "on" would act on an intention the user may have abandoned minutes ago.
+  async recoverStuckLight() {
+    const lightState = this.cachedStatus?.state?.light?.state;
+    
+    if (!LIGHT_TRANSITION_STATES.includes(lightState)) {
+      this.lightRecoveryAttempted = false;
+      return false;
+    }
+    
+    // One attempt per stuck episode - never a loop.
+    if (this.lightRecoveryAttempted || this.queuedLightAction) {
+      return false;
+    }
+    
+    this.lightRecoveryAttempted = true;
+    
+    const action = (lightState === 'onpending') ? 'off' : 'on';
+    
+    this.log.warn(`[Light] Stuck at "${lightState}" - the coop appears to have dropped the command. Sending "${action}" to settle it.`);
+    
+    try {
+      await this.sendAction(action, 'Light');
+      this.setCachedState('light', action === 'on' ? 'onpending' : 'offpending');
+      this.scheduleNextPoll(FAST_POLL_MS);
+      return true;
+    } catch (error) {
+      this.log.error('[Light] Could not settle the stuck light state:', error.message);
+      return false;
     }
   }
   
   async setLightOn(value) {
     const action = value ? 'on' : 'off';
     
+    // Do not hand it to a busy device. Accept it, show it, send it shortly.
+    if (this.doorIsMoving()) {
+      this.queuedLightAction = action;
+      this.setCachedState('light', value ? 'onpending' : 'offpending');
+      this.log.info('[Light]', action === 'on' ? 'Turning on light' : 'Turning off light', '- queued until the door stops moving');
+      
+      if (this.lightService) {
+        this.lightService.getCharacteristic(hap.Characteristic.On).updateValue(value);
+      }
+      
+      return;
+    }
+    
     try {
       await this.sendAction(action, 'Light');
       this.log.info('[Light]', action === 'on' ? 'Turning on light' : 'Turning off light');
+      
+      this.setCachedState('light', value ? 'onpending' : 'offpending');
+      
+      if (this.lightService) {
+        this.lightService.getCharacteristic(hap.Characteristic.On).updateValue(value);
+      }
       
       // Drop to the fast cadence so the change is reflected promptly.
       this.scheduleNextPoll(FAST_POLL_MS);
@@ -891,35 +1176,23 @@ class OmletCoopAccessory {
   // battery
   
   async getBatteryLevel() {
-    try {
-      if (!this.cachedStatus) {
-        await this.pollDeviceState();
-      }
-      const batteryLevel = this.cachedStatus?.state?.general?.batteryLevel;
-      if (batteryLevel === undefined || batteryLevel === null) {
-        throw new Error('Invalid API response: missing battery level');
-      }
-      return batteryLevel;
-    } catch (error) {
-      this.log.error('[Battery] Failed to get battery level:', error.message);
-      throw new Error('Failed to get battery level');
+    const batteryLevel = this.cachedStatus?.state?.general?.batteryLevel;
+    
+    if (batteryLevel === undefined || batteryLevel === null) {
+      throw unavailable();
     }
+    
+    return batteryLevel;
   }
   
   async getStatusLowBattery() {
-    try {
-      if (!this.cachedStatus) {
-        await this.pollDeviceState();
-      }
-      const batteryLevel = this.cachedStatus?.state?.general?.batteryLevel;
-      if (batteryLevel === undefined || batteryLevel === null) {
-        throw new Error('Invalid API response: missing battery level');
-      }
-      return (batteryLevel < 20) ? 1 : 0;
-    } catch (error) {
-      this.log.error('[Battery] Failed to get low battery status:', error.message);
-      throw new Error('Failed to get low battery status');
+    const batteryLevel = this.cachedStatus?.state?.general?.batteryLevel;
+    
+    if (batteryLevel === undefined || batteryLevel === null) {
+      throw unavailable();
     }
+    
+    return (batteryLevel < 20) ? 1 : 0;
   }
   
   sendAction(action, context = 'Action') {
@@ -1043,9 +1316,13 @@ class OmletCoopAccessory {
               reject(new Error('Failed to parse JSON response'));
             }
           } else {
-            if (this.debug || res.statusCode === 401 || res.statusCode === 403) {
-              this.log.error(`[${context}] HTTP Error`, res.statusCode);
-              this.log.error(`[${context}] Response:`, data);
+            const isAuthError = (res.statusCode === 401 || res.statusCode === 403);
+            
+            // Auth failures are reported once, in context, by handleAuthError -
+            // repeating the same 401 every cycle is noise. Everything else is a
+            // real problem and must not be swallowed.
+            if (this.debug || !isAuthError) {
+              this.log.error(`[${context}] HTTP Error`, res.statusCode, data || '');
             }
             const error = new Error(`HTTP ${res.statusCode}`);
             error.statusCode = res.statusCode;
@@ -1073,35 +1350,25 @@ class OmletCoopAccessory {
   // door
   
   async getCurrentDoorState() {
-    try {
-      if (!this.cachedStatus) {
-        await this.pollDeviceState();
-      }
-      const doorState = this.cachedStatus?.state?.door?.state;
-      if (!doorState) {
-        throw new Error('Invalid API response: missing door state');
-      }
-      return mapDoorState(doorState);
-    } catch (error) {
-      this.log.error('[Door] Failed to get door state:', error.message);
-      throw new Error('Failed to get door state');
+    const doorState = this.cachedStatus?.state?.door?.state;
+    
+    if (!doorState) {
+      throw unavailable();
     }
+    
+    return mapDoorState(doorState);
   }
   
   async getTargetDoorState() {
-    try {
-      if (!this.cachedStatus) {
-        await this.pollDeviceState();
-      }
-      const doorState = this.cachedStatus?.state?.door?.state;
-      if (DOOR_OPEN_STATES.includes(doorState)) {
-        return hap.Characteristic.TargetDoorState.OPEN;
-      }
-      return hap.Characteristic.TargetDoorState.CLOSED;
-    } catch (error) {
-      this.log.error('[Door] Failed to get target door state:', error.message);
-      throw new Error('Failed to get target door state');
+    const doorState = this.cachedStatus?.state?.door?.state;
+    
+    if (!doorState) {
+      throw unavailable();
     }
+    
+    return DOOR_OPEN_STATES.includes(doorState)
+      ? hap.Characteristic.TargetDoorState.OPEN
+      : hap.Characteristic.TargetDoorState.CLOSED;
   }
   
   async setTargetDoorState(value) {
@@ -1158,7 +1425,9 @@ class OmletCoopAccessory {
       await this.sendAction(action, 'Door');
       this.log.info('[Door]', action === 'open' ? 'Opening door' : 'Closing door');
       
-      const newCurrentState = (action === 'open') 
+      this.setCachedState('door', wantOpen ? 'openpending' : 'closepending');
+      
+      const newCurrentState = wantOpen
         ? hap.Characteristic.CurrentDoorState.OPENING
         : hap.Characteristic.CurrentDoorState.CLOSING;
       
@@ -1201,11 +1470,52 @@ class OmletCoopAccessory {
   
   // polling
   
+  // A saved deviceId can outlive the device: replacing a coop door issues a new id,
+  // and every request then 404s forever against an id that no longer exists.
+  async handleDeviceNotFound() {
+    if (this.platform.rediscovering) {
+      return false;
+    }
+    
+    this.platform.rediscovering = true;
+    
+    try {
+      this.log.warn(`[Device] Saved device ID ${this.deviceId} no longer exists on this account, rediscovering`);
+      
+      const devices = await this.platform.discoverAllDevices();
+      const match = devices.find(device => device.deviceId && device.deviceId !== this.deviceId);
+      
+      if (!match) {
+        this.log.error('[Device] No coop door found on this account. Check the Omlet app, then restart Homebridge.');
+        return false;
+      }
+      
+      this.deviceId = match.deviceId;
+      this.platform.deviceId = match.deviceId;
+      await this.platform.saveStoredCredentials();
+      this.accessoryInfoUpdated = false;
+      this.log.info(`[Device] Now using "${match.name}" (${match.deviceId})`);
+      
+      return true;
+    } catch (error) {
+      this.log.error('[Device] Rediscovery failed:', error.message);
+      return false;
+    } finally {
+      this.platform.rediscovering = false;
+    }
+  }
+  
   async pollDeviceState() {
     try {
       const status = await this.getDeviceStatus('Poll');
       this.cachedStatus = status;
+      this.platform.authFailures = 0;
+      await this.platform.settleCredentials();
+      this.platform.migrateTriState(status);
       this.reconcileServices(status);
+      
+      // Dispatch anything held back while the door was moving.
+      await this.flushQueuedLight();
 
       // update serial and firmware from the first real response
       if (!this.accessoryInfoUpdated) {
@@ -1222,6 +1532,17 @@ class OmletCoopAccessory {
 
       return status;
     } catch (error) {
+      if (error.statusCode === 404) {
+        const found = await this.handleDeviceNotFound();
+        if (found) {
+          const status = await this.getDeviceStatus('Poll');
+          this.cachedStatus = status;
+          this.reconcileServices(status);
+          return status;
+        }
+        throw error;
+      }
+      
       if (error.statusCode === 401 || error.statusCode === 403) {
         const refreshed = await this.platform.handleAuthError();
         if (refreshed) {
@@ -1235,7 +1556,9 @@ class OmletCoopAccessory {
           }
         }
       }
-      this.log.error('[Poll] Failed to get device status:', error.message);
+      if (this.debug) {
+        this.log.warn('[Poll] Failed to get device status:', error.message);
+      }
       throw error;
     }
   }
@@ -1275,6 +1598,10 @@ class OmletCoopAccessory {
         if (lightState !== undefined) {
           const isOn = (lightState === 'on' || lightState === 'onpending');
           this.lightService.getCharacteristic(hap.Characteristic.On).updateValue(isOn);
+          
+          if (!LIGHT_TRANSITION_STATES.includes(lightState)) {
+            this.lightRecoveryAttempted = false;
+          }
           if (this.debug) {
             this.log.info('[Poll] Light:', lightState, '-> isOn:', isOn);
           }
@@ -1347,6 +1674,16 @@ class OmletCoopAccessory {
       return;
     }
     
+    // Nothing will change until someone fixes the credentials, so stop asking.
+    if (this.platform.authFailedPermanently) {
+      if (!this.pollingHalted) {
+        this.pollingHalted = true;
+        this.log.error('[Poll] Polling stopped. Update your credentials in the plugin settings, then restart Homebridge.');
+      }
+      this.stopPolling();
+      return;
+    }
+    
     if (this.isTransitioning()) {
       this.fastPollCount++;
       
@@ -1355,7 +1692,29 @@ class OmletCoopAccessory {
         return;
       }
       
-      this.log.warn(`[Poll] Door has not settled after ${Math.round(MAX_FAST_POLLS * FAST_POLL_MS / 1000)}s (state: ${this.cachedStatus?.state?.door?.state ?? 'unknown'}), returning to normal polling`);
+      const doorState = this.cachedStatus?.state?.door?.state ?? 'unknown';
+      const lightState = this.cachedStatus?.state?.light?.state ?? 'unknown';
+      const stuck = [];
+      
+      if (DOOR_TRANSITION_STATES.includes(doorState)) {
+        stuck.push(`door: ${doorState}`);
+      }
+      
+      if (LIGHT_TRANSITION_STATES.includes(lightState)) {
+        stuck.push(`light: ${lightState}`);
+      }
+      
+      this.log.warn(`[Poll] Still mid-change after ${Math.round(MAX_FAST_POLLS * FAST_POLL_MS / 1000)}s (${stuck.join(', ') || `door: ${doorState}, light: ${lightState}`}), returning to normal polling`);
+      
+      // recoverStuckLight schedules its own fast poll to confirm the fix; falling
+      // through here would immediately overwrite it with the slow one.
+      const recovered = await this.recoverStuckLight();
+      
+      this.fastPollCount = 0;
+      
+      if (recovered) {
+        return;
+      }
     }
     
     this.fastPollCount = 0;
@@ -1363,7 +1722,7 @@ class OmletCoopAccessory {
   }
 
   startPolling() {
-    this.log.info(`Polling every ${this.pollInterval / 1000}s, or every ${FAST_POLL_MS / 1000}s while the door or light is moving`);
+    this.log.info(`Polling every ${this.pollInterval / 1000}s`);
     this.scheduleNextPoll(0);
   }
 }
