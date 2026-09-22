@@ -15,8 +15,53 @@ class OmletPluginUiServer extends HomebridgePluginUiServer {
     this.onRequest('/session-status', this.handleSessionStatus.bind(this));
     this.onRequest('/persist-token', this.handlePersistToken.bind(this));
     this.onRequest('/forget', this.handleForget.bind(this));
+    this.onRequest('/strip-credentials', this.handleStripCredentials.bind(this));
     
     this.ready();
+  }
+  
+  // Rewrites config.json directly. updatePluginConfig() could not be relied on to
+  // REMOVE a key - omitting it from the staged block did not delete it - and a
+  // credential left in config.json overrides the working one in storage.
+  async handleStripCredentials() {
+    const configPath = this.homebridgeConfigPath;
+    
+    if (!configPath) {
+      throw new RequestError('Homebridge config path is unavailable', { status: 500 });
+    }
+    
+    try {
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      
+      if (!Array.isArray(config.platforms)) {
+        return { success: true, removed: [] };
+      }
+      
+      const removed = [];
+      
+      config.platforms.forEach((block) => {
+        if (!block || block.platform !== 'OmletCoop') {
+          return;
+        }
+        
+        ['email', 'password', 'bearerToken'].forEach((field) => {
+          if (block[field] !== undefined) {
+            delete block[field];
+            removed.push(field);
+          }
+        });
+      });
+      
+      if (removed.length > 0) {
+        const tmpPath = `${configPath}.omlet-tmp`;
+        fs.writeFileSync(tmpPath, JSON.stringify(config, null, 4));
+        fs.renameSync(tmpPath, configPath);
+      }
+      
+      return { success: true, removed: removed };
+    } catch (error) {
+      throw new RequestError(`Failed to clean config.json: ${error.message}`, { status: 500 });
+    }
   }
   
   tokenFilePath() {

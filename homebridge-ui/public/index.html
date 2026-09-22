@@ -145,7 +145,7 @@
   
   <div id="connectedPanel" class="hidden">
     <div id="connectedDetails" style="padding: 15px; background: #f8f9fa; border-radius: 6px; margin-bottom: 15px;"></div>
-    <button id="disconnectButton" class="btn" style="background: #6c757d; color: #fff;">Disconnect and set up again</button>
+    <button id="disconnectButton" class="btn" style="background: #dc3545; color: #fff;">Disconnect and set up again</button>
   </div>
   
   <div id="loginForm">
@@ -322,6 +322,29 @@ function togglePasswordVisibility() {
     } catch (ignored) { /* nothing more we can do */ }
   });
   
+  // Anything in this list is a credential and must never end up in config.json.
+  const CREDENTIAL_FIELDS = ['email', 'password', 'bearerToken'];
+  
+  // Persist immediately after a successful login and confirm the credentials really
+  // are gone from config.json, rather than trusting that staging removed them.
+  async function persistCleanConfig(config) {
+    const clean = JSON.parse(JSON.stringify(config));
+    
+    CREDENTIAL_FIELDS.forEach(field => delete clean[field]);
+    
+    await homebridge.updatePluginConfig([clean]);
+    await homebridge.savePluginConfig();
+    currentConfig = clean;
+    
+    // updatePluginConfig merges, so omitting a credential does not remove it - the
+    // file has to be edited directly. Nothing is written in its place.
+    try {
+      await homebridge.request('/strip-credentials', {});
+    } catch (error) {
+      console.error('Could not clean config.json:', error);
+    }
+  }
+  
   let currentConfig = null;
   let discoveredToken = null;
   let discoveredDevices = [];
@@ -376,11 +399,8 @@ function togglePasswordVisibility() {
     const updatedConfig = {
       name: currentConfig.name || 'Omlet Coop',
       platform: 'OmletCoop',
-      email: document.getElementById('email').value.trim() || undefined,
       countryCode: document.getElementById('countryCode').value,
       authMethod: selectedMethod(),
-      email: undefined,
-      bearerToken: undefined,
       deviceId: document.getElementById('manualDeviceId').value.trim() || undefined,
       enableLight: document.getElementById('enableLight').value,
       enableBattery: document.getElementById('enableBattery').value,
@@ -402,6 +422,9 @@ function togglePasswordVisibility() {
         delete updatedConfig[key];
       }
     });
+    
+    // Never staged: the credential lives in the Homebridge storage directory.
+    CREDENTIAL_FIELDS.forEach(field => delete updatedConfig[field]);
     
     await homebridge.updatePluginConfig([updatedConfig]);
   }
@@ -536,11 +559,10 @@ function togglePasswordVisibility() {
     document.getElementById('setupIntro').classList.add('hidden');
   }
   
+  // Note: window.confirm is unusable here. This page runs in a sandboxed iframe,
+  // where modal dialogs are ignored outright - the call returns false and the click
+  // silently does nothing. The red button is the warning.
   document.getElementById('disconnectButton').addEventListener('click', async () => {
-    if (!confirm('Remove the saved credentials? You will need to log in again.')) {
-      return;
-    }
-    
     const button = document.getElementById('disconnectButton');
     button.disabled = true;
     
@@ -897,13 +919,13 @@ function togglePasswordVisibility() {
         }
         
         try {
-          await homebridge.updatePluginConfig([JSON.parse(JSON.stringify(keyConfig))]);
+          await persistCleanConfig(keyConfig);
         } catch (configError) {
           console.error('Config update error:', configError);
           throw new Error('Failed to update config: ' + configError.message);
         }
         
-        showStatus(keyMessage + ' Click <strong>Save</strong> to apply changes.', 'success', true);
+        showStatus(keyMessage + ' Click Save to finish.', 'success');
         loginButton.textContent = 'Login Successful ✓';
         loginButton.disabled = false;
         return;
@@ -1173,11 +1195,8 @@ function togglePasswordVisibility() {
       }
       
       try {
-        // Ensure config is JSON-serializable (fixes clone errors)
-        const serializableConfig = JSON.parse(JSON.stringify(newConfig));
-        await homebridge.updatePluginConfig([serializableConfig]);
-        currentConfig = serializableConfig;
-        showStatus('Login successful. Click <strong>Save</strong> to apply changes.', 'success', true);
+        await persistCleanConfig(newConfig);
+        showStatus('Login successful. Click Save to finish.', 'success');
         loginButton.textContent = 'Login Successful ✓';
         loginButton.disabled = false;
       } catch (configError) {

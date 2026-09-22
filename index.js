@@ -77,7 +77,7 @@ class OmletCoopPlatform {
     this.api = api;
     
     this.email = this.validateEmail(config.email);
-    this.password = config.password;
+    this.password = config.password || undefined;
     this.countryCode = this.validateCountryCode(config.countryCode);
     this.bearerToken = this.validateToken(config.bearerToken, 'bearerToken');
     this.deviceId = this.validateDeviceId(config.deviceId, 'deviceId');
@@ -99,7 +99,10 @@ class OmletCoopPlatform {
     this.enableBattery = this.normalizeTriState(config.enableBattery, 'enableBattery');
     this.triStateMigrated = false;
     this.credentialsSettled = false;
+    this.credentialVerified = false;
+    this.authFailedDiscovery = false;
     this.previousVersion = null;
+    this.storedToken = null;
     this.debug = config.debug || false;
     
     this.currentToken = null;
@@ -264,13 +267,20 @@ class OmletCoopPlatform {
       if (fs.existsSync(this.storage)) {
         const data = JSON.parse(fs.readFileSync(this.storage, 'utf8'));
         
-        // config.json is where the settings UI now writes the token, so a token
-        // there is the current one. Storage is a fallback for installs that predate
-        // that, and for tokens the plugin obtained itself by logging in.
-        if (data.bearerToken && !this.bearerToken) {
+        // Storage holds the working credential. A token in config.json is something
+        // the user handed us that we have not consumed yet, so it is tried first -
+        // but it is always kept separately, so a bad one cannot lock us out of a
+        // good stored credential.
+        if (data.bearerToken) {
           const validToken = this.validateToken(data.bearerToken, 'stored bearerToken');
+          
           if (validToken) {
-            this.bearerToken = validToken;
+            this.storedToken = validToken;
+            
+            if (!this.bearerToken) {
+              this.bearerToken = validToken;
+            }
+            
             if (this.debug) {
               this.log.info('Loaded stored API token');
             }
@@ -302,12 +312,36 @@ class OmletCoopPlatform {
   
   async saveStoredCredentials() {
     try {
-      const data = {
-        bearerToken: this.bearerToken,
-        deviceId: this.deviceId,
+      // Merge rather than overwrite. Writing this object wholesale meant a run
+      // with no usable token could erase a perfectly good stored one, leaving no
+      // way back: the bad credential then became the only copy.
+      let existing = {};
+      
+      try {
+        if (fs.existsSync(this.storage)) {
+          existing = JSON.parse(fs.readFileSync(this.storage, 'utf8')) || {};
+        }
+      } catch (error) {
+        existing = {};
+      }
+      
+      const data = Object.assign({}, existing, {
         lastVersion: PLUGIN_VERSION,
         lastUpdated: new Date().toISOString()
-      };
+      });
+      
+      if (this.deviceId) {
+        data.deviceId = this.deviceId;
+      }
+      
+      // Only a credential that has actually worked may be written here.
+      if (this.credentialVerified && this.bearerToken) {
+        data.bearerToken = this.bearerToken;
+      }
+      
+      if (!data.bearerToken) {
+        delete data.bearerToken;
+      }
       
       fs.writeFileSync(this.storage, JSON.stringify(data, null, 2));
       if (this.debug) {
@@ -328,7 +362,10 @@ class OmletCoopPlatform {
   // Order is deliberate: storage write first, purge only if it succeeded. Purging
   // first and then failing to save would leave no working credential anywhere.
   async settleCredentials() {
-    if (this.credentialsSettled) {
+    // Nothing may be persisted or purged until an API call has actually succeeded
+    // with this credential. Do not latch the flag before that, or the real chance
+    // to clean up later is lost.
+    if (this.credentialsSettled || !this.credentialVerified) {
       return;
     }
     
@@ -495,9 +532,17 @@ class OmletCoopPlatform {
       }
       
       if (!this.deviceId) {
-        this.log.error('No device ID found! Please ensure your coop door is connected to your Omlet account and try again.');
+        if (!this.authFailedDiscovery) {
+          this.log.error('No device ID found! Please ensure your coop door is connected to your Omlet account and try again.');
+        }
+        
         return;
       }
+      
+      // Discovery succeeding is proof the credential works, so clean config.json now
+      // rather than after the first poll - the settings UI cannot reliably delete a
+      // key, so this is the mechanism users actually depend on.
+      await this.settleCredentials();
       
       await this.discoverDevices();
       
@@ -603,11 +648,12 @@ class OmletCoopPlatform {
     });
   }
   
-  async autoDiscoverDevice() {
+  async autoDiscoverDevice(isRetry = false) {
     try {
       this.log.info('Discovering devices on your account...');
       
       const devices = await this.discoverAllDevices();
+      this.credentialVerified = true;
       
       if (devices.length === 0) {
         this.log.warn('No devices found on your account');
@@ -627,6 +673,26 @@ class OmletCoopPlatform {
       }
       
     } catch (error) {
+      // Discovery runs before any polling, so this is the first place a bad
+      // credential shows up. Without this, a rejected key from config.json stops
+      // setup dead: no device, no polling, and therefore no chance to fall back to
+      // the working credential in storage or to clean config.json up afterwards.
+      if (!isRetry && (error.statusCode === 401 || error.statusCode === 403)) {
+        const recovered = await this.handleAuthError();
+        
+        if (recovered) {
+          return this.autoDiscoverDevice(true);
+        }
+      }
+      
+      // Point at the actual cause. "Check your coop is connected" sends someone to
+      // the wrong place entirely when the real problem is a rejected credential.
+      if (error.statusCode === 401 || error.statusCode === 403) {
+        this.authFailedDiscovery = true;
+        this.log.error('Could not sign in to Omlet. Open the Omlet Coop plugin settings and log in again.');
+        return;
+      }
+      
       this.log.error('Device discovery failed:', error.message);
     }
   }
@@ -689,7 +755,9 @@ class OmletCoopPlatform {
               reject(new Error('Failed to parse device list'));
             }
           } else {
-            reject(new Error(`HTTP ${res.statusCode}`));
+            const error = new Error(`HTTP ${res.statusCode}`);
+            error.statusCode = res.statusCode;
+            reject(error);
           }
         });
       });
@@ -713,6 +781,17 @@ class OmletCoopPlatform {
       throw new Error('Authentication permanently failed - restart Homebridge after fixing credentials');
     }
 
+    // A credential from config.json that does not work must never block a working
+    // one in storage - otherwise a typo'd key jams the plugin permanently, because
+    // config is only cleaned up after a successful poll.
+    if (this.storedToken && this.currentToken !== this.storedToken) {
+      this.log.warn('The API key in config.json was rejected; falling back to the saved credential');
+      this.bearerToken = this.storedToken;
+      this.currentToken = this.storedToken;
+      this.authFailures = 0;
+      return true;
+    }
+    
     // No password is persisted, so a dead key cannot be refreshed automatically.
     // It may have been revoked in the developer console, or the login session behind
     // it may have ended - the plugin cannot tell which, so cover both. A couple of
@@ -825,7 +904,6 @@ class OmletCoopAccessory {
     this.firstReconcileDone = false;
     this.lastFault = null;
     this.pollingHalted = false;
-    this.queuedLightAction = null;
     this.lightRecoveryAttempted = false;
     this.lightIntent = null;
     this.reapplyLight = null;
@@ -1080,40 +1158,6 @@ class OmletCoopAccessory {
     return (lightState === 'on' || lightState === 'onpending');
   }
   
-  doorIsMoving() {
-    return DOOR_TRANSITION_STATES.includes(this.cachedStatus?.state?.door?.state);
-  }
-  
-  // The coop runs one action at a time. A light command sent while the door is
-  // moving is accepted, parked in *pending, and applied at some later point of the
-  // device's choosing - which is why pressing the light mid-close appears to do
-  // nothing for a long time. Holding it here and sending it the instant the door
-  // settles gets it executed while the device is still awake.
-  async flushQueuedLight() {
-    if (!this.queuedLightAction || this.doorIsMoving()) {
-      return;
-    }
-    
-    const action = this.queuedLightAction;
-    this.queuedLightAction = null;
-    
-    try {
-      await this.sendAction(action, 'Light');
-      this.log.info('[Light]', action === 'on' ? 'Turning on light' : 'Turning off light', '(door finished moving)');
-      this.setCachedState('light', action === 'on' ? 'onpending' : 'offpending');
-      this.scheduleNextPoll(FAST_POLL_MS);
-    } catch (error) {
-      this.log.error('[Light] Queued light command failed:', error.message);
-      
-      if (this.lightService) {
-        const actual = this.cachedStatus?.state?.light?.state;
-        this.lightService
-          .getCharacteristic(hap.Characteristic.On)
-          .updateValue(actual === 'on' || actual === 'onpending');
-      }
-    }
-  }
-  
   // A light command sent while the coop is busy is accepted by the API - the state
   // flips to *pending - and then dropped by the device, leaving a pending state that
   // never resolves. Observed stuck at "onpending" for over an hour.
@@ -1130,7 +1174,7 @@ class OmletCoopAccessory {
     }
     
     // One attempt per stuck episode - never a loop.
-    if (this.lightRecoveryAttempted || this.queuedLightAction) {
+    if (this.lightRecoveryAttempted) {
       return false;
     }
     
@@ -1199,20 +1243,6 @@ class OmletCoopAccessory {
   
   async setLightOn(value) {
     const action = value ? 'on' : 'off';
-    
-    // Do not hand it to a busy device. Accept it, show it, send it shortly.
-    if (this.doorIsMoving()) {
-      this.queuedLightAction = action;
-      this.lightIntent = { action: action, reapplied: false };
-      this.setCachedState('light', value ? 'onpending' : 'offpending');
-      this.log.info('[Light]', action === 'on' ? 'Turning on light' : 'Turning off light', '- queued until the door stops moving');
-      
-      if (this.lightService) {
-        this.lightService.getCharacteristic(hap.Characteristic.On).updateValue(value);
-      }
-      
-      return;
-    }
     
     try {
       await this.sendAction(action, 'Light');
@@ -1580,61 +1610,67 @@ class OmletCoopAccessory {
     }
   }
   
+  // Everything that must happen after a poll succeeds, whatever route got us
+  // there. Keeping this in one place matters: the retry-after-recovery paths used
+  // to skip it, so a credential that only worked on the second attempt never got
+  // marked as verified and config.json was never cleaned up.
+  async handlePollSuccess(status) {
+    this.cachedStatus = status;
+    this.platform.authFailures = 0;
+    this.platform.credentialVerified = true;
+    
+    await this.platform.settleCredentials();
+    this.platform.migrateTriState(status);
+    this.reconcileServices(status);
+    await this.maybeReapplyLight();
+
+    // update serial and firmware from the first real response
+    if (!this.accessoryInfoUpdated) {
+      const deviceSerial = status.deviceSerial || this.deviceId;
+      const firmware = status.state?.general?.firmwareVersionCurrent || '0.0.0';
+      this.accessory.getService(hap.Service.AccessoryInformation)
+        .setCharacteristic(hap.Characteristic.SerialNumber, deviceSerial)
+        .setCharacteristic(hap.Characteristic.FirmwareRevision, firmware);
+      if (this.debug) {
+        this.log.info('[Info] Updated accessory info: Serial=' + deviceSerial + ', Firmware=' + firmware);
+      }
+      this.accessoryInfoUpdated = true;
+    }
+
+    return status;
+  }
+
   async pollDeviceState() {
     try {
-      const status = await this.getDeviceStatus('Poll');
-      this.cachedStatus = status;
-      this.platform.authFailures = 0;
-      await this.platform.settleCredentials();
-      this.platform.migrateTriState(status);
-      this.reconcileServices(status);
-      
-      // Dispatch anything held back while the door was moving.
-      await this.flushQueuedLight();
-      await this.maybeReapplyLight();
-
-      // update serial and firmware from the first real response
-      if (!this.accessoryInfoUpdated) {
-        const deviceSerial = status.deviceSerial || this.deviceId;
-        const firmware = status.state?.general?.firmwareVersionCurrent || '0.0.0';
-        this.accessory.getService(hap.Service.AccessoryInformation)
-          .setCharacteristic(hap.Characteristic.SerialNumber, deviceSerial)
-          .setCharacteristic(hap.Characteristic.FirmwareRevision, firmware);
-        if (this.debug) {
-          this.log.info('[Info] Updated accessory info: Serial=' + deviceSerial + ', Firmware=' + firmware);
-        }
-        this.accessoryInfoUpdated = true;
-      }
-
-      return status;
+      return await this.handlePollSuccess(await this.getDeviceStatus('Poll'));
     } catch (error) {
       if (error.statusCode === 404) {
         const found = await this.handleDeviceNotFound();
+        
         if (found) {
-          const status = await this.getDeviceStatus('Poll');
-          this.cachedStatus = status;
-          this.reconcileServices(status);
-          return status;
+          return this.handlePollSuccess(await this.getDeviceStatus('Poll'));
         }
+        
         throw error;
       }
       
       if (error.statusCode === 401 || error.statusCode === 403) {
         const refreshed = await this.platform.handleAuthError();
+        
         if (refreshed) {
           try {
-            const status = await this.getDeviceStatus('Poll');
-            this.cachedStatus = status;
-            return status;
+            return await this.handlePollSuccess(await this.getDeviceStatus('Poll'));
           } catch (retryError) {
             this.log.error('[Poll] Retry after token refresh failed:', retryError.message);
             throw retryError;
           }
         }
       }
+      
       if (this.debug) {
         this.log.warn('[Poll] Failed to get device status:', error.message);
       }
+      
       throw error;
     }
   }

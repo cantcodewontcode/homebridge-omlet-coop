@@ -23,8 +23,7 @@
 ### Reliability
 - Open and close commands are no longer sent when the door is already in the requested state
 - Polling drops to 5 second intervals while the door or light is moving, and returns to the configured interval once settled
-- Light commands issued while the door is moving are held and sent once it stops
-- A light left in a stuck pending state is settled automatically
+- A light left in a stuck pending state is cleared automatically, and the original command re-applied
 - The plugin recovers when a saved device ID no longer exists on the account
 - Replacing a coop keeps the existing HomeKit accessory rather than creating a new one
 
