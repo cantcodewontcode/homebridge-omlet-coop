@@ -50,34 +50,46 @@ That's it! The plugin handles all the complexity behind the scenes.
 
 For advanced users, the plugin supports:
 
+- **Developer API Key**: Use an official Omlet API key instead of email/password
 - **API Token**: Manually provide an API token instead of email/password
-- **Device ID**: Manually specify a device ID (useful for multiple doors)
 - **API Server**: Override the default API server hostname (if ever needed)
 - **Poll Interval**: Reduce how often the plugin checks device status (default: 30 seconds)
 - **Debug Mode**: Enable detailed logging for troubleshooting
 
-#### Manual API Token and Device ID Retrieval
+#### Using a Developer API Key
 
-If preferred, you can manually retrieve your API token and device ID using the Omlet API:
+Omlet provides a developer console where you can generate an API key for your own
+account. If you would rather not enter your password into Homebridge at all, this is
+the way to do it.
 
-**Step 1: Get your API token**
-```bash
-curl -X POST https://x107.omlet.co.uk/api/v1/login \
-  -H "Content-Type: application/json" \
-  -d '{"emailAddress":"your@email.com","password":"yourpassword","cc":"US"}'
-```
-The response will contain your `apiKey` (bearer token).
+**Step 1: Generate a key**
 
-**Step 2: Get your device ID**
-```bash
-curl -s https://x107.omlet.co.uk/api/v1/group \
-  -H "Authorization: Bearer YOUR_TOKEN_HERE"
-```
-Look for your device in the response.
+1. Go to [smart.omlet.com/developers](https://smart.omlet.com/developers) and log in
+   with the same email address and password you use for the Omlet app.
+2. Open **API Keys** and click **Generate Key**.
+3. Copy the key.
 
-**Step 3: Configure the plugin**
+**Step 2: Add it to the plugin**
 
-Enter both the API Token and Device ID in the Advanced Settings section of the plugin configuration. The plugin will use these directly without requiring your email address and password. If you also enter your email address and password, these will be used in case the token should ever expire or become invalid.
+1. Open the plugin settings and expand **Advanced Settings**.
+2. Paste the key into **Developer API Key**.
+3. Click **Login**. The plugin validates the key and discovers your coop door.
+
+An API key is used in preference to everything else, so no password is needed and
+none is stored. Keys are long-lived and do not expire on their own — if one stops
+working it has been revoked, and you will need to generate a new one.
+
+#### Password Handling
+
+Your password is never saved to `config.json`. When you log in, the plugin exchanges
+it for a token and stores only that token, in the Homebridge storage directory. If
+you have upgraded from an older version, any password already in your config is
+removed automatically the next time the plugin starts.
+
+Because no password is kept, a token that stops working cannot be refreshed on its
+own. If that happens the accessory shows **No Response** in the Home app, and opening
+the plugin settings will tell you the session has expired. Enter your password and
+click **Login** again.
 
 ### Config.json Example (Alternative Method)
 
@@ -93,8 +105,8 @@ If you prefer to edit `config.json` directly:
       "password": "YOUR_PASSWORD",
       "countryCode": "US",
       "apiServer": "x107.omlet.co.uk",
+      "apiKey": "YOUR_DEVELOPER_API_KEY",
       "bearerToken": "YOUR_API_TOKEN",
-      "deviceId": "YOUR_DEVICE_ID",
       "pollInterval": 30,
       "enableLight": true,
       "debug": false
@@ -103,19 +115,25 @@ If you prefer to edit `config.json` directly:
 }
 ```
 
-**Note:** At minimum, you must provide either:
-- **Email address and password** (for automatic token management), OR
-- **API token** (for manual authentication)
+**Note:** At minimum, you must provide one of:
+- **Email address and password** — the plugin logs in, saves a token, and then
+  removes the password from `config.json` on its next start, OR
+- **Developer API key** (`apiKey`) — used in preference to everything else, OR
+- **API token** (`bearerToken`)
+
+Setting up through the plugin settings screen is recommended, since it never writes
+your password to `config.json` in the first place.
 
 Set `enableLight` to `false` if you do not have the Omlet Coop Light module installed.
 
 ### Multiple Devices
 
-If you have multiple Omlet coop doors on your account:
+Your coop door is found automatically — there is nothing to configure.
 
-1. During initial setup, the plugin will automatically select the first device
-2. To use a different device, expand **Advanced Settings** and enter the specific **Device ID**
-3. Device IDs are shown in the Homebridge logs during startup
+If you have more than one door on your account, the plugin uses the first one it
+finds and lists the others in the Homebridge log at startup. If that is not the door
+you want, please [open an issue](https://github.com/cantcodewontcode/homebridge-omlet-coop/issues)
+and say so.
 
 ## Usage
 
@@ -147,10 +165,16 @@ You can use them fully like any other HomeKit accessory.
 - Verify network connectivity between Homebridge and the Omlet API
 - Enable Debug Mode to see polling activity in the logs
 
-### Token validation fails
+### Accessory shows "No Response" / session expired
 
-- The plugin will automatically re-authenticate using your stored credentials
-- If issues persist, try removing and re-adding your email/password in the plugin settings
+Because your password is not stored, the plugin cannot silently log in again if its
+saved token stops working.
+
+- Open the plugin settings. If the session has expired, a message at the top will say so
+- Enter your password and click **Login** to get a new token, then restart Homebridge
+- If you are using a Developer API key, the key has been revoked — generate a new one
+  at [smart.omlet.com/developers](https://smart.omlet.com/developers) and paste it in
+- Check the Homebridge log for the specific authentication error
 
 ## Support
 
