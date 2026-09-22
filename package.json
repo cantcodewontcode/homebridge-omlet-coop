@@ -23,6 +23,16 @@
     "url": "https://github.com/cantcodewontcode/homebridge-omlet-coop/issues"
   },
   "homepage": "https://github.com/cantcodewontcode/homebridge-omlet-coop#readme",
+  "funding": [
+    {
+      "type": "paypal",
+      "url": "https://paypal.me/williamspry36"
+    },
+    {
+      "type": "venmo",
+      "url": "https://venmo.com/u/william-spry-3"
+    }
+  ],
   "engines": {
     "node": ">=20.0.0",
     "homebridge": ">=1.6.0 || >=2.0.0"
