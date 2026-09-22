@@ -9,6 +9,18 @@ let hap;
 // other firmware reports them; an unknown value falls back to STOPPED.
 const DOOR_OPENING_STATES = ['openpending', 'opening'];
 const DOOR_CLOSING_STATES = ['closepending', 'closing'];
+// Confirmed by obstructing a live door: a blocked close sets door.fault to
+// "blocked". Other fault values are presumed to exist (motor, calibration) but are
+// unknown, and they would not mean "something is in the doorway" - so only "blocked"
+// drives ObstructionDetected, and anything else is logged so we learn the vocabulary.
+const DOOR_FAULT_NONE = 'none';
+const DOOR_FAULT_BLOCKED = 'blocked';
+
+const DOOR_TRANSITION_STATES = DOOR_OPENING_STATES.concat(DOOR_CLOSING_STATES, ['stopping']);
+const LIGHT_TRANSITION_STATES = ['onpending', 'offpending'];
+const FAST_POLL_MS = 5000;
+const MAX_FAST_POLLS = 18; // ~90s at 5s, well past the ~16s a healthy door takes
+
 const DOOR_OPEN_STATES = ['open'].concat(DOOR_OPENING_STATES);
 const DOOR_CLOSED_STATES = ['closed'].concat(DOOR_CLOSING_STATES);
 
@@ -629,8 +641,11 @@ class OmletCoopAccessory {
     
     this.accessoryInfoUpdated = false;
     this.cachedStatus = null;
-    this.transitionTimer = null;
+    this.pollTimer = null;
+    this.pollGeneration = 0;
+    this.fastPollCount = 0;
     this.pendingServiceChange = { light: null, battery: null };
+    this.lastFault = null;
     
     // serial and firmware get updated after the first successful poll
     this.accessory.getService(hap.Service.AccessoryInformation)
@@ -656,7 +671,7 @@ class OmletCoopAccessory {
     
     this.doorService
       .getCharacteristic(hap.Characteristic.ObstructionDetected)
-      .onGet(() => false);
+      .onGet(this.getObstructionDetected.bind(this));
     
     // An explicit true/false is applied immediately. Under "auto" we keep whatever
     // the cached accessory already had and let the first poll decide, so the service
@@ -667,6 +682,35 @@ class OmletCoopAccessory {
     this.log.info(`Coop accessory initialized (light: ${this.describePref(this.enableLight)}, battery: ${this.describePref(this.enableBattery)})`);
     
     this.startPolling();
+  }
+  
+  // Read-only status: HomeKit cannot use this to block the door control, and we
+  // would not want it to. It self-clears - the fault drops back to "none" within a
+  // few seconds of the next close attempt, including the door's own dusk close.
+  getObstructionDetected() {
+    return this.cachedStatus?.state?.door?.fault === DOOR_FAULT_BLOCKED;
+  }
+  
+  // Faults we do not recognise are surfaced once each, rather than silently ignored
+  // or wrongly reported as an obstruction.
+  noteDoorFault(fault) {
+    if (!fault || fault === DOOR_FAULT_NONE) {
+      this.lastFault = fault;
+      return;
+    }
+    
+    if (fault === this.lastFault) {
+      return;
+    }
+    
+    this.lastFault = fault;
+    
+    if (fault === DOOR_FAULT_BLOCKED) {
+      this.log.warn('[Door] Door reported blocked - something is in the doorway. It will clear on the next close attempt.');
+      return;
+    }
+    
+    this.log.warn(`[Door] Door reported an unrecognised fault: "${fault}". Please report this at https://github.com/cantcodewontcode/homebridge-omlet-coop/issues`);
   }
   
   describePref(pref) {
@@ -821,8 +865,8 @@ class OmletCoopAccessory {
       await this.sendAction(action, 'Light');
       this.log.info('[Light]', action === 'on' ? 'Turning on light' : 'Turning off light');
       
-      // Measured at ~3s on a live light, but watch rather than assume.
-      this.watchTransition('Light', ['on', 'off'], 30);
+      // Drop to the fast cadence so the change is reflected promptly.
+      this.scheduleNextPoll(FAST_POLL_MS);
       
     } catch (error) {
       this.log.error('[Light] Failed to set light state:', error.message);
@@ -1122,9 +1166,9 @@ class OmletCoopAccessory {
         .getCharacteristic(hap.Characteristic.CurrentDoorState)
         .updateValue(newCurrentState);
       
-      // Measured at ~16s on a live door, but a stiff or obstructed track can take
-      // considerably longer without failing, so watch until it actually settles.
-      this.watchTransition('Door', ['open', 'closed'], 90);
+      // Drop to the fast cadence. The loop stays fast until the door settles, so a
+      // stiff or obstructed track that takes longer than usual is still tracked.
+      this.scheduleNextPoll(FAST_POLL_MS);
         
     } catch (error) {
       this.log.error('[Door] Failed to set door state:', error.message);
@@ -1152,55 +1196,6 @@ class OmletCoopAccessory {
       }
       
       throw new Error('Failed to set door state');
-    }
-  }
-  
-  // Watch a command through to completion. How long a cycle takes varies: door
-  // calibration, bedding or debris in the track, and battery level all change the
-  // speed without stopping the door working. So poll until it settles rather than
-  // guessing one delay and hoping.
-  watchTransition(label, settledStates, maxSeconds = 90, intervalMs = 5000) {
-    this.stopTransitionWatch();
-    
-    const started = Date.now();
-    
-    this.transitionTimer = setInterval(async () => {
-      let state = null;
-      
-      try {
-        const status = await this.pollDeviceState();
-        this.pushStateToHomeKit();
-        state = (label === 'Door')
-          ? status?.state?.door?.state
-          : status?.state?.light?.state;
-      } catch (error) {
-        if (this.debug) {
-          this.log.warn(`[${label}] Transition poll failed:`, error.message);
-        }
-      }
-      
-      const elapsed = Math.round((Date.now() - started) / 1000);
-      const settled = state && settledStates.includes(state);
-      
-      if (settled) {
-        this.stopTransitionWatch();
-        if (this.debug) {
-          this.log.info(`[${label}] Settled at "${state}" after ${elapsed}s`);
-        }
-        return;
-      }
-      
-      if (elapsed >= maxSeconds) {
-        this.stopTransitionWatch();
-        this.log.warn(`[${label}] Did not settle within ${maxSeconds}s (last state: ${state ?? 'unknown'})`);
-      }
-    }, intervalMs);
-  }
-  
-  stopTransitionWatch() {
-    if (this.transitionTimer) {
-      clearInterval(this.transitionTimer);
-      this.transitionTimer = null;
     }
   }
   
@@ -1265,6 +1260,14 @@ class OmletCoopAccessory {
           this.log.info('[Poll] Door:', doorState, '-> HomeKit:', currentState);
         }
       }
+      
+      const fault = status.state?.door?.fault;
+      if (fault !== undefined) {
+        this.noteDoorFault(fault);
+        this.doorService
+          .getCharacteristic(hap.Characteristic.ObstructionDetected)
+          .updateValue(fault === DOOR_FAULT_BLOCKED);
+      }
 
       // Light state
       if (this.lightService) {
@@ -1296,38 +1299,71 @@ class OmletCoopAccessory {
   }
 
   stopPolling() {
-    this.stopTransitionWatch();
-    
     if (this.pollTimer) {
-      clearInterval(this.pollTimer);
+      clearTimeout(this.pollTimer);
       this.pollTimer = null;
     }
   }
 
+  isTransitioning() {
+    const doorState = this.cachedStatus?.state?.door?.state;
+    const lightState = this.cachedStatus?.state?.light?.state;
+    
+    return DOOR_TRANSITION_STATES.includes(doorState)
+      || LIGHT_TRANSITION_STATES.includes(lightState);
+  }
+
+  // A single self-rescheduling timer rather than a fixed interval, for two reasons:
+  // a slow cycle (timeout -> re-login -> retry) can outlast the interval and stack
+  // overlapping polls, and a separate transition watcher would double up on requests
+  // against a backend that only refreshes every ~600s anyway.
+  //
+  // The generation counter is what makes it safe: if something reschedules while a
+  // poll is already in flight, that poll finds its generation stale and declines to
+  // schedule a successor, so exactly one chain survives.
+  scheduleNextPoll(delayMs) {
+    this.pollGeneration++;
+    
+    if (this.pollTimer) {
+      clearTimeout(this.pollTimer);
+    }
+    
+    const generation = this.pollGeneration;
+    this.pollTimer = setTimeout(() => this.runPoll(generation), delayMs);
+  }
+
+  async runPoll(generation) {
+    try {
+      await this.pollDeviceState();
+      this.pushStateToHomeKit();
+    } catch (error) {
+      if (this.debug) {
+        this.log.warn('[Poll] Poll cycle failed:', error.message);
+      }
+    }
+    
+    // Superseded while we were in flight - the newer timer owns the chain now.
+    if (generation !== this.pollGeneration) {
+      return;
+    }
+    
+    if (this.isTransitioning()) {
+      this.fastPollCount++;
+      
+      if (this.fastPollCount <= MAX_FAST_POLLS) {
+        this.scheduleNextPoll(FAST_POLL_MS);
+        return;
+      }
+      
+      this.log.warn(`[Poll] Door has not settled after ${Math.round(MAX_FAST_POLLS * FAST_POLL_MS / 1000)}s (state: ${this.cachedStatus?.state?.door?.state ?? 'unknown'}), returning to normal polling`);
+    }
+    
+    this.fastPollCount = 0;
+    this.scheduleNextPoll(this.pollInterval);
+  }
+
   startPolling() {
-    (async () => {
-      try {
-        await this.pollDeviceState();
-        this.pushStateToHomeKit();
-      } catch (error) {
-        this.log.error('[Poll] First poll failed, will retry on next interval');
-      }
-    })();
-
-    this.pollTimer = setInterval(async () => {
-      try {
-        await this.pollDeviceState();
-        this.pushStateToHomeKit();
-      } catch (error) {
-        if (this.debug) {
-          this.log.warn('[Poll] Poll cycle failed:', error.message);
-        }
-      }
-    }, this.pollInterval);
-
-    const services = ['door'];
-    if (this.enableLight) services.push('light');
-    if (this.enableBattery) services.push('battery');
-    this.log.info(`Polling started for ${services.join(', ')}: every ${this.pollInterval / 1000} seconds`);
+    this.log.info(`Polling every ${this.pollInterval / 1000}s, or every ${FAST_POLL_MS / 1000}s while the door or light is moving`);
+    this.scheduleNextPoll(0);
   }
 }
