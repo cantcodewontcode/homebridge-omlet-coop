@@ -116,11 +116,13 @@ class OmletPluginUiServer extends HomebridgePluginUiServer {
   // connected, which is confusing rather than helpful.
   async handleForget() {
     try {
-      const file = this.tokenFilePath();
-      
-      if (fs.existsSync(file)) {
-        fs.unlinkSync(file);
-      }
+      // Leave a marker rather than just deleting the file. The plugin uses it to
+      // tell "the user asked to disconnect" apart from "credentials are missing
+      // for some other reason", and removes the HomeKit accessories accordingly.
+      fs.writeFileSync(this.tokenFilePath(), JSON.stringify({
+        disconnected: true,
+        lastUpdated: new Date().toISOString()
+      }, null, 2));
       
       return { success: true };
     } catch (error) {

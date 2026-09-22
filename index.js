@@ -93,7 +93,13 @@ class OmletCoopPlatform {
     // publishing a Lightbulb for a module that is not fitted produces an accessory
     // whose every command fails. Auto-discovery is the only sane "show it" option.
     if (this.enableLight === true) {
-      this.log.warn('enableLight "on" is not supported - the coop light is auto-discovered. Using "auto".');
+      // Only complain about a deliberate "on". A legacy boolean is just the old
+      // default and is handled silently by migrateTriState - warning about it
+      // would alarm every upgrading user who had the light switched on.
+      if (typeof config.enableLight === 'string') {
+        this.log.warn('enableLight "on" is not supported - the coop light is auto-discovered. Using "auto".');
+      }
+      
       this.enableLight = 'auto';
     }
     this.enableBattery = this.normalizeTriState(config.enableBattery, 'enableBattery');
@@ -101,6 +107,7 @@ class OmletCoopPlatform {
     this.credentialsSettled = false;
     this.credentialVerified = false;
     this.authFailedDiscovery = false;
+    this.wasDisconnected = false;
     this.previousVersion = null;
     this.storedToken = null;
     this.debug = config.debug || false;
@@ -266,6 +273,12 @@ class OmletCoopPlatform {
     try {
       if (fs.existsSync(this.storage)) {
         const data = JSON.parse(fs.readFileSync(this.storage, 'utf8'));
+        
+        // Set by the Disconnect button in the settings page.
+        if (data.disconnected) {
+          this.wasDisconnected = true;
+          return;
+        }
         
         // Storage holds the working credential. A token in config.json is something
         // the user handed us that we have not consumed yet, so it is tried first -
@@ -518,6 +531,14 @@ class OmletCoopPlatform {
         this.authMode = 'password';
         await this.login();
       } else {
+        // An explicit disconnect should take the accessories with it. Anything
+        // else - a credential that has gone missing for another reason - leaves
+        // them in place, so a user does not lose their rooms and automations to a
+        // transient problem.
+        if (this.wasDisconnected) {
+          this.removeAllAccessories();
+        }
+        
         this.log.error('Not configured. Open the Omlet Coop plugin settings and log in.');
         return;
       }
@@ -834,6 +855,25 @@ class OmletCoopPlatform {
       
       return false;
     }
+  }
+  
+  removeAllAccessories() {
+    if (this.accessories.length > 0) {
+      this.log.info(`Disconnected: removing ${this.accessories.length} accessory(s) from HomeKit`);
+      this.api.unregisterPlatformAccessories('homebridge-omlet', 'OmletCoop', this.accessories);
+      this.accessories = [];
+    }
+    
+    // Clear the marker so this happens once.
+    try {
+      if (fs.existsSync(this.storage)) {
+        fs.unlinkSync(this.storage);
+      }
+    } catch (error) {
+      this.log.warn('Could not clear the disconnect marker:', error.message);
+    }
+    
+    this.wasDisconnected = false;
   }
   
   async discoverDevices() {
