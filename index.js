@@ -27,9 +27,12 @@ class OmletCoopPlatform {
     
     this.currentToken = null;
     this.storage = this.api.user.storagePath() + '/omlet-coop-tokens.json';
-    this.authFailedPermanently = false;
     this.reloginAttempts = 0;
     this.maxReloginAttempts = 3;
+    // After a burst of failed re-logins we back off instead of giving up permanently,
+    // so a transient API or network outage can't wedge the plugin until a manual restart.
+    this.reloginCooldownMs = 5 * 60 * 1000;
+    this.reloginCooldownUntil = 0;
     
     this.accessories = [];
     
@@ -456,39 +459,45 @@ class OmletCoopPlatform {
   }
   
   async handleAuthError() {
-    // If auth already failed 3 times, don't retry - just show "No Response" in HomeKit
-    if (this.authFailedPermanently) {
-      throw new Error('Authentication permanently failed - restart Homebridge after fixing credentials');
-    }
-
-    // If using token-only mode with no credentials, can't re-login
-    if (!this.email || !this.password) {
-      this.log.error('API token expired or invalid. No email/password configured for automatic re-login. Please update your API token in the plugin settings.');
-      this.authFailedPermanently = true;
+    // Back off after a failed burst, but never give up permanently: a transient outage
+    // must not wedge the plugin into "No Response" until someone restarts Homebridge.
+    if (Date.now() < this.reloginCooldownUntil) {
       return false;
     }
-    
+
+    // Token-only mode with no credentials: can't re-login until the user updates the
+    // token in settings. Back off so this doesn't log on every poll cycle.
+    if (!this.email || !this.password) {
+      this.log.error('API token expired or invalid. No email/password configured for automatic re-login. Please update your API token in the plugin settings.');
+      this.reloginCooldownUntil = Date.now() + this.reloginCooldownMs;
+      return false;
+    }
+
     this.reloginAttempts++;
     this.log.warn(`Authentication error detected, attempting to re-login (attempt ${this.reloginAttempts}/${this.maxReloginAttempts})...`);
-    
+
     try {
       await this.login();
       this.log.info('Re-login successful');
-      
+
       // Reset counter on success
       this.reloginAttempts = 0;
-      
+
       return true;
     } catch (error) {
       this.log.error('Failed to re-login:', error.message);
-      
+
       if (this.reloginAttempts >= this.maxReloginAttempts) {
-        this.log.error(`Re-login failed ${this.maxReloginAttempts} times. Accessory will show "No Response" until Homebridge is restarted with valid credentials.`);
-        this.authFailedPermanently = true;
+        // Cool down, then let the next poll cycle start a fresh attempt rather than
+        // failing permanently. Recovers on its own once the API/credentials are valid.
+        const cooldownMin = Math.round(this.reloginCooldownMs / 60000);
+        this.log.error(`Re-login failed ${this.maxReloginAttempts} times. Backing off ${cooldownMin} min, then retrying automatically. The accessory shows "No Response" until then.`);
+        this.reloginAttempts = 0;
+        this.reloginCooldownUntil = Date.now() + this.reloginCooldownMs;
       } else {
         this.log.warn(`Will retry on next operation (${this.maxReloginAttempts - this.reloginAttempts} attempts remaining)`);
       }
-      
+
       return false;
     }
   }
