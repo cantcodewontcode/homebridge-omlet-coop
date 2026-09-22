@@ -1,6 +1,21 @@
 const https = require('https');
 const fs = require('fs');
 
+// Homebridge exposes api.serverVersion (its own version), never the plugin's, and
+// has no notion of "what version of this plugin ran last time". Recording it here
+// is the only way a future release can tell what it is upgrading from.
+//
+// Prefer shape detection where the data is self-describing - the tri-state
+// migration keys off boolean-vs-string and needs no version at all. This is for
+// future migrations where the shape cannot discriminate.
+const PLUGIN_VERSION = (() => {
+  try {
+    return require('./package.json').version || null;
+  } catch (error) {
+    return null;
+  }
+})();
+
 let hap;
 
 // Door state vocabulary, confirmed against a live Autodoor (firmware 1.0.53).
@@ -84,6 +99,7 @@ class OmletCoopPlatform {
     this.enableBattery = this.normalizeTriState(config.enableBattery, 'enableBattery');
     this.triStateMigrated = false;
     this.credentialsSettled = false;
+    this.previousVersion = null;
     this.debug = config.debug || false;
     
     this.currentToken = null;
@@ -263,6 +279,10 @@ class OmletCoopPlatform {
           }
         }
         
+        // Whatever ran last time. null on a fresh install, and on any install that
+        // predates this field - both mean "older than the first version to record it".
+        this.previousVersion = data.lastVersion || null;
+        
         if (data.deviceId && !this.deviceId) {
           const validDeviceId = this.validateDeviceId(data.deviceId, 'stored deviceId');
           if (validDeviceId) {
@@ -285,6 +305,7 @@ class OmletCoopPlatform {
       const data = {
         bearerToken: this.bearerToken,
         deviceId: this.deviceId,
+        lastVersion: PLUGIN_VERSION,
         lastUpdated: new Date().toISOString()
       };
       
@@ -462,6 +483,10 @@ class OmletCoopPlatform {
       } else {
         this.log.error('Not configured. Open the Omlet Coop plugin settings and log in.');
         return;
+      }
+      
+      if (this.debug && this.previousVersion !== PLUGIN_VERSION) {
+        this.log.info(`Upgraded from ${this.previousVersion || 'an earlier version'} to ${PLUGIN_VERSION}`);
       }
       
       if (!this.deviceId) {
@@ -802,6 +827,8 @@ class OmletCoopAccessory {
     this.pollingHalted = false;
     this.queuedLightAction = null;
     this.lightRecoveryAttempted = false;
+    this.lightIntent = null;
+    this.reapplyLight = null;
     this.batteryOverrideRefused = false;
     
     // serial and firmware get updated after the first successful poll
@@ -1110,11 +1137,25 @@ class OmletCoopAccessory {
     this.lightRecoveryAttempted = true;
     
     const action = (lightState === 'onpending') ? 'off' : 'on';
+    const stuckIntent = (lightState === 'onpending') ? 'on' : 'off';
     
-    this.log.warn(`[Light] Stuck at "${lightState}" - the coop appears to have dropped the command. Sending "${action}" to settle it.`);
+    // Clearing the jam leaves the light in the wrong state, so put it back - but
+    // only if this was our command, and only once. Re-applying a pending state we
+    // did not cause would be acting on somebody else's intention, and re-applying
+    // repeatedly would ping-pong the light if the coop keeps dropping commands.
+    const shouldReapply = this.lightIntent
+      && this.lightIntent.action === stuckIntent
+      && !this.lightIntent.reapplied;
+    
+    this.log.warn(`[Light] Light stuck in ${lightState} state, forcing a light ${action} command to resolve`);
     
     try {
       await this.sendAction(action, 'Light');
+      
+      if (shouldReapply) {
+        this.lightIntent.reapplied = true;
+        this.reapplyLight = stuckIntent;
+      }
       this.setCachedState('light', action === 'on' ? 'onpending' : 'offpending');
       this.scheduleNextPoll(FAST_POLL_MS);
       return true;
@@ -1124,12 +1165,45 @@ class OmletCoopAccessory {
     }
   }
   
+  // Sends the user's original command again once the stuck state has cleared.
+  async maybeReapplyLight() {
+    if (!this.reapplyLight) {
+      return;
+    }
+    
+    const lightState = this.cachedStatus?.state?.light?.state;
+    
+    // Wait for the forced command to finish before acting again.
+    if (LIGHT_TRANSITION_STATES.includes(lightState)) {
+      return;
+    }
+    
+    const action = this.reapplyLight;
+    this.reapplyLight = null;
+    
+    // It may already be where the user wanted it.
+    if ((action === 'on') === (lightState === 'on')) {
+      return;
+    }
+    
+    this.log.info(`[Light] Re-applying ${action} now the light has unstuck`);
+    
+    try {
+      await this.sendAction(action, 'Light');
+      this.setCachedState('light', action === 'on' ? 'onpending' : 'offpending');
+      this.scheduleNextPoll(FAST_POLL_MS);
+    } catch (error) {
+      this.log.error('[Light] Could not re-apply the light command:', error.message);
+    }
+  }
+  
   async setLightOn(value) {
     const action = value ? 'on' : 'off';
     
     // Do not hand it to a busy device. Accept it, show it, send it shortly.
     if (this.doorIsMoving()) {
       this.queuedLightAction = action;
+      this.lightIntent = { action: action, reapplied: false };
       this.setCachedState('light', value ? 'onpending' : 'offpending');
       this.log.info('[Light]', action === 'on' ? 'Turning on light' : 'Turning off light', '- queued until the door stops moving');
       
@@ -1144,6 +1218,7 @@ class OmletCoopAccessory {
       await this.sendAction(action, 'Light');
       this.log.info('[Light]', action === 'on' ? 'Turning on light' : 'Turning off light');
       
+      this.lightIntent = { action: action, reapplied: false };
       this.setCachedState('light', value ? 'onpending' : 'offpending');
       
       if (this.lightService) {
@@ -1404,7 +1479,7 @@ class OmletCoopAccessory {
       : DOOR_CLOSED_STATES.includes(doorState);
     
     if (alreadyThere) {
-      this.log.info(`[Door] Door is already ${doorState}, not sending ${action}`);
+      this.log.info(`[Door] Door is already ${wantOpen ? 'open' : 'closed'}`);
       
       // Report the real state back. From HomeKit's point of view the request
       // succeeded - the door is where it was asked to be.
@@ -1516,6 +1591,7 @@ class OmletCoopAccessory {
       
       // Dispatch anything held back while the door was moving.
       await this.flushQueuedLight();
+      await this.maybeReapplyLight();
 
       // update serial and firmware from the first real response
       if (!this.accessoryInfoUpdated) {
@@ -1601,6 +1677,10 @@ class OmletCoopAccessory {
           
           if (!LIGHT_TRANSITION_STATES.includes(lightState)) {
             this.lightRecoveryAttempted = false;
+            
+            if (this.lightIntent && (this.lightIntent.action === 'on') === (lightState === 'on')) {
+              this.lightIntent = null;
+            }
           }
           if (this.debug) {
             this.log.info('[Poll] Light:', lightState, '-> isOn:', isOn);

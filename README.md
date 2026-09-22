@@ -47,7 +47,7 @@ This is the recommended setup method, and the one officially supported by Omlet.
 2. Open **API Keys** and click **Generate Key**, then copy it.
 3. In Homebridge plugin settings, choose **Developer API key**, paste the key, and click **Login**.
 
-Your API key is stored in your Homebridge config, and your coop and accessories are auto-discovered.
+Your coop and accessories are auto-discovered, and the key is saved to the Homebridge storage directory rather than `config.json`.
 
 ### Option 2: Omlet account
 
@@ -57,7 +57,7 @@ This is the simplest setup option, and does not require the manual generation of
 2. Enter your email address and password, and select your country.
 3. Click **Login**.
 
-Logging in will generate an Omlet API key which is stored in your Homebridge config, and your coop and accessories are auto-discovered. This method impersonates the login process used by the official Omlet mobile app, and therefore the API key generated is not visible in the Omlet Developer console and cannot be revoked.
+Logging in generates an Omlet API key, which is saved to the Homebridge storage directory rather than `config.json`. Your coop and accessories are auto-discovered. This method impersonates the login process used by the official Omlet mobile app, so the key it generates is not visible in the Omlet Developer console and cannot be revoked.
 
 ### Advanced Settings
 
@@ -67,9 +67,13 @@ Rarely needed:
 - **Poll Interval**: Reduce how often the plugin checks device status (minimum: 30 seconds)
 - **Debug Mode**: Enable detailed logging for troubleshooting
 
-### Password Handling
+### Where credentials are kept
 
-When signing in with email address and password, your credentials are never saved to `config.json`. The plugin obtains a token and stores it instead. If you have upgraded from an older version, any password already in your config is scrubbed automatically the next time the plugin starts.
+Your API key is written to the Homebridge storage directory, not to `config.json`. Your email address and password are never saved anywhere: they are used once to obtain a key and then discarded.
+
+`config.json` is only ever a way to hand the plugin a credential, never a place it keeps one. If you put an API key, or an email address and password, into `config.json` by hand, the plugin uses it, saves what it needs to storage, and then removes all three fields from `config.json`. This happens only after the credential has actually worked - an invalid one is left in place so you can correct it.
+
+If you have upgraded from an older version, any password sitting in your config is removed automatically the first time the plugin connects.
 
 Because no password is kept, a token that stops working cannot be refreshed on its own. If that happens the accessory shows **No Response** in the Home app, and opening the plugin settings will tell you the session has expired. Complete the sign-in process again to restore your accessories.
 
@@ -97,12 +101,12 @@ If you prefer to edit `config.json` directly:
 ```
 
 **Note:** At minimum, you must provide one of:
-- **Developer API key** (`bearerToken`) — used in preference to everything else, OR
-- **Email address and password** — the plugin logs in, saves the key it is issued to
-  `bearerToken`, and removes the password from `config.json` on its next start
+- **Developer API key** (`bearerToken`), OR
+- **Email address and password**
 
-Both methods end up in the same `bearerToken` field, because a key you generate and a
-key issued by logging in are the same credential.
+Both are consumed the same way: the plugin uses the credential, saves it to the
+Homebridge storage directory, and removes it from `config.json`. A key you generate
+and a key issued by logging in are the same thing, so both go in `bearerToken`.
 
 Set `enableLight` to `false` if you do not have the Omlet Coop Light module installed.
 
@@ -148,7 +152,7 @@ You can use them fully like any other HomeKit accessory.
 ### Accessory shows "No Response" / session expired
 
 Because your password is not stored, the plugin cannot silently log in again if its
-saved token stops working.
+saved key stops working.
 
 - Open the plugin settings. If the session has expired, a message at the top will say so
 - Enter your password and click **Login** to get a new token, then restart Homebridge
