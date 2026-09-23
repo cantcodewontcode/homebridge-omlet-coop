@@ -826,9 +826,11 @@ class OmletCoopPlatform {
   }
   
   async handleAuthError() {
-    // If auth already failed 3 times, don't retry - just show "No Response" in HomeKit
+    // Already latched - report it to the caller instead of throwing. Every caller
+    // reaches this from inside its own catch block, so a throw here escapes that
+    // handler entirely rather than falling through to the error handling below it.
     if (this.authFailedPermanently) {
-      throw new Error('Authentication permanently failed - restart Homebridge after fixing credentials');
+      return false;
     }
 
     // A credential from config.json that does not work must never block a working
