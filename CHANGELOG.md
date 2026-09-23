@@ -3,39 +3,35 @@
 ## [0.9.9] - 2026-09-22
 
 ### Setup
-- Added support for Omlet developer API keys, generated at smart.omlet.com/developers
-- Plugin settings now offer a choice of connection method: developer API key or Omlet account
-- Once connected, the settings page shows the connected device instead of the setup form, with a Disconnect option
-- Discovered device details now include whether a coop light is fitted and the power source
+- Setup adds support for the official Omlet developer API keys. This is the only officially-supported sign-in method from Omlet, and keys can be managed and revoked on their portal.
+- If a coop is factory reset or replaced, the HomeKit accessories are preserved by the replacement coop (or reset coop), instead of appearing as a new coop.
+- Repeated authentication failures no longer fill the log; polling stops until credentials are fixed.
 
-### Credentials
-- Credentials are stored in the Homebridge storage directory instead of config.json
-- Email address, password and API key are removed from config.json once a credential has been verified and saved
-- A credential supplied in config.json by hand is still accepted; it is moved to storage on first successful use
-- An invalid credential is left in config.json so it can be corrected
+### Security Enhancements
+- Omlet account email and password are no longer stored in config. Existing credentials are cleared on upgrade.
+- API keys in config.json are moved on upgrade to the recommended storage locations.
+- It is still possible to manually add email address, password, or bearerToken to the config.json file, but once login is validated, the credentials are removed from the config.
+- API tokens are no longer written to the log in debug mode.
 
 ### Accessories
-- The coop light accessory is auto-discovered and re-checked on every poll
-- The battery accessory is shown only when the door is running on batteries; it is never shown for a mains-powered door
-- Both settings default to automatic, with manual overrides in Advanced Settings
-- Obstruction is reported to HomeKit when the door reports a blocked fault
+- The coop light accessory is now auto-discovered at setup and periodically, so if you add the light later, Homebridge auto-adds it (and vice versa). The light accessory can still be manually disabled in advanced settings.
+- The battery accessory is shown only when the door is actually running on batteries, never for a plugged-in unit.
+- Obstruction is now reported to HomeKit when the door reports a blocked fault.
 
-### Reliability
-- Open and close commands are no longer sent when the door is already in the requested state
-- Polling drops to 5 second intervals while the door or light is moving, and returns to the configured interval once settled
-- A light left in a stuck pending state is cleared automatically, and the original command re-applied
-- The plugin recovers when a saved device ID no longer exists on the account
-- Replacing a coop keeps the existing HomeKit accessory rather than creating a new one
+### Omlet Server Reliability
+Workarounds implemented for a known Omlet server issue wherein a command to put an accessory in the state it is already in can cause a "stuck pending" state for the accessory. (For example, sending a command to open an already-open door causes the door to stick in a "pending open" state for ~1 hour):
+- When sending a command to an accessory, the existing state is checked, and the command is aborted if the accessory is already in the correct state.
+- When an accessory is detected as being in a stuck state (i.e. "pending" for over 90 seconds) the system auto-flips the accessory. (For example, if stuck in "pending on" state, the system forces an "off" command followed by an "on" command.)
 
-### Fixes
-- United Kingdom now uses the country code GB, matching Omlet. UK is accepted and translated
-- Added Spain, Norway and Poland to the country list
-- Door states reported while moving are handled correctly; previously they showed as stopped
-- Poll interval no longer saves an out of range or empty value
-- Repeated authentication failures no longer fill the log, and polling stops until credentials are fixed
-- Accessories report as unreachable using the HomeKit status rather than throwing
-- Login requests send the correct Content-Length for non-ASCII passwords
-- API tokens are no longer written to the log in debug mode
+### Performance Improvements
+- 5-second polling interval when the door or light state is changing, to more quickly confirm when the door has finished opening or closing.
+- Improved handling of door states in motion.
+
+### Bug Fixes
+- Added Spain, Norway, and Poland country support, and corrected United Kingdom entry.
+- Poll interval no longer saves an out-of-range or empty value.
+- Accessories report as unreachable using the proper HomeKit status instead of throwing.
+- Login requests send the correct Content-Length for non-ASCII passwords.
 
 ## [0.9.7] - 2026-02-18
 - Fixed config schema: moved required fields to object-level array per JSON Schema spec
