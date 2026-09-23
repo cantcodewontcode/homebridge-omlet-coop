@@ -59,6 +59,10 @@ const STUCK_RECOVERY = {
   }
 };
 const FAST_POLL_MS = 5000;
+// How many consecutive connection failures get logged normally. After this the
+// plugin goes quiet until the connection recovers: an Omlet outage is not made more
+// diagnosable by repeating the same line every 30 seconds for an hour.
+const MAX_LOGGED_FAILURES = 3;
 const MAX_FAST_POLLS = 18; // ~90s at 5s, well past the ~16s a healthy door takes
 
 const DOOR_OPEN_STATES = ['open'].concat(DOOR_OPENING_STATES);
@@ -969,6 +973,7 @@ class OmletCoopAccessory {
     this.firstReconcileDone = false;
     this.lastFault = null;
     this.pollingHalted = false;
+    this.consecutiveFailures = 0;
     this.recoveryAttempted = { door: false, light: false };
     this.intents = { door: null, light: null };
     this.reapply = { door: null, light: null };
@@ -1038,6 +1043,39 @@ class OmletCoopAccessory {
     }
     
     this.log.warn(`[Door] Door reported an unrecognised fault: "${fault}". Please report this at https://github.com/cantcodewontcode/homebridge-omlet-coop/issues`);
+  }
+  
+  // One line per failure while something is clearly wrong, then silence until it
+  // recovers - and one line to say it did.
+  noteRequestFailure(context, message) {
+    this.consecutiveFailures++;
+    
+    if (this.consecutiveFailures < MAX_LOGGED_FAILURES) {
+      this.log.error(`[${context}] ${message}`);
+      return;
+    }
+    
+    if (this.consecutiveFailures === MAX_LOGGED_FAILURES) {
+      this.log.error(`[${context}] ${message}`);
+      this.log.warn(`[${context}] Further connection errors will be logged only in debug mode until the connection recovers.`);
+      return;
+    }
+    
+    if (this.debug) {
+      this.log.warn(`[${context}] ${message}`);
+    }
+  }
+  
+  noteRequestSuccess() {
+    if (this.consecutiveFailures === 0) {
+      return;
+    }
+    
+    if (this.consecutiveFailures >= MAX_LOGGED_FAILURES) {
+      this.log.info(`Connection to Omlet recovered after ${this.consecutiveFailures} failed attempts`);
+    }
+    
+    this.consecutiveFailures = 0;
   }
   
   // After a command, HomeKit immediately re-reads the characteristic. The getters
@@ -1457,14 +1495,23 @@ class OmletCoopAccessory {
         });
       });
       
+      let timedOut = false;
+      
       req.on('timeout', () => {
+        timedOut = true;
         req.destroy();
-        this.log.error(`[${context}] Request timeout after 10 seconds`);
+        this.noteRequestFailure(context, 'Request timeout after 10 seconds');
         reject(new Error('Request timeout'));
       });
       
       req.on('error', (error) => {
-        this.log.error(`[${context}] Network error:`, error.message);
+        // destroy() from the timeout above also emits 'error'. Reporting both turned
+        // a single failed request into two error lines.
+        if (timedOut) {
+          return;
+        }
+        
+        this.noteRequestFailure(context, `Network error: ${error.message}`);
         reject(error);
       });
       
@@ -1539,14 +1586,23 @@ class OmletCoopAccessory {
         });
       });
       
+      let timedOut = false;
+      
       req.on('timeout', () => {
+        timedOut = true;
         req.destroy();
-        this.log.error(`[${context}] Request timeout after 10 seconds`);
+        this.noteRequestFailure(context, 'Request timeout after 10 seconds');
         reject(new Error('Request timeout'));
       });
       
       req.on('error', (error) => {
-        this.log.error(`[${context}] Network error:`, error.message);
+        // destroy() from the timeout above also emits 'error'. Reporting both turned
+        // a single failed request into two error lines.
+        if (timedOut) {
+          return;
+        }
+        
+        this.noteRequestFailure(context, `Network error: ${error.message}`);
         reject(error);
       });
       
@@ -1718,6 +1774,7 @@ class OmletCoopAccessory {
   // to skip it, so a credential that only worked on the second attempt never got
   // marked as verified and config.json was never cleaned up.
   async handlePollSuccess(status) {
+    this.noteRequestSuccess();
     this.cachedStatus = status;
     this.platform.authFailures = 0;
     this.platform.credentialVerified = true;
