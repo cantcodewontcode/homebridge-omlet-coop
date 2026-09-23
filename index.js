@@ -65,6 +65,26 @@ const FAST_POLL_MS = 5000;
 const MAX_LOGGED_FAILURES = 3;
 const MAX_FAST_POLLS = 18; // ~90s at 5s, well past the ~16s a healthy door takes
 
+// Auth failures decay rather than stopping. A revoked key and a server outage are
+// indistinguishable from the response Omlet sends, so giving up permanently would
+// strand anyone whose outage simply ran long: five-minute checks for the first hour,
+// hourly after that, indefinitely.
+const AUTH_BACKOFF_FAST_MS = 5 * 60 * 1000;
+const AUTH_BACKOFF_FAST_WINDOW_MS = 60 * 60 * 1000;
+const AUTH_BACKOFF_SLOW_MS = 60 * 60 * 1000;
+
+function describeDuration(ms) {
+  const minutes = Math.round(ms / 60000);
+  
+  if (minutes < 60) {
+    return `${minutes} minute${minutes === 1 ? '' : 's'}`;
+  }
+  
+  const hours = Math.round(minutes / 60);
+  
+  return `${hours} hour${hours === 1 ? '' : 's'}`;
+}
+
 const DOOR_OPEN_STATES = ['open'].concat(DOOR_OPENING_STATES);
 const DOOR_CLOSED_STATES = ['closed'].concat(DOOR_CLOSING_STATES);
 
@@ -144,10 +164,11 @@ class OmletCoopPlatform {
     this.currentToken = null;
     this.authMode = null;
     this.storage = this.api.user.storagePath() + '/omlet-coop-tokens.json';
-    this.authFailedPermanently = false;
-    this.reloginAttempts = 0;
-    this.maxReloginAttempts = 3;
     this.authFailures = 0;
+    this.maxAuthFailures = 3;
+    this.authBackoffSince = null;
+    this.authBackoffPhase = null;
+    this.authBackoffPolls = 0;
     
     this.accessories = [];
     
@@ -825,19 +846,104 @@ class OmletCoopPlatform {
     });
   }
   
-  async handleAuthError() {
-    // Already latched - report it to the caller instead of throwing. Every caller
-    // reaches this from inside its own catch block, so a throw here escapes that
-    // handler entirely rather than falling through to the error handling below it.
-    if (this.authFailedPermanently) {
-      return false;
+  // The settings page writes a new token straight to the storage file and never
+  // touches config.json, so Homebridge does not restart the bridge and we would keep
+  // presenting the dead credential. Re-read it whenever auth fails, or someone who
+  // signs in again while we are backing off waits an hour to find out it worked.
+  refreshStoredToken() {
+    try {
+      if (!fs.existsSync(this.storage)) {
+        return;
+      }
+      
+      const data = JSON.parse(fs.readFileSync(this.storage, 'utf8'));
+      
+      // Unchanged, or nothing to read - skip validation so a persistently bad token
+      // does not log on every single retry.
+      if (!data.bearerToken || data.bearerToken === this.storedToken) {
+        return;
+      }
+      
+      const validToken = this.validateToken(data.bearerToken, 'stored bearerToken');
+      
+      if (validToken) {
+        this.storedToken = validToken;
+      }
+    } catch (error) {
+      if (this.debug) {
+        this.log.warn('Could not re-read stored credentials:', error.message);
+      }
     }
-
+  }
+  
+  authBackoffActive() {
+    return this.authBackoffSince !== null;
+  }
+  
+  enterAuthBackoff() {
+    if (this.authBackoffActive()) {
+      return;
+    }
+    
+    this.authBackoffSince = Date.now();
+    this.authBackoffPhase = 'fast';
+    this.authBackoffPolls = 0;
+    
+    this.log.warn(`Could not authenticate with Omlet after ${this.maxAuthFailures} attempts. Retrying every 5 minutes. Open the Omlet Coop plugin settings to sign in again or paste a new API key.`);
+  }
+  
+  // Called by the poll loop while backing off: returns how long to wait, and reports
+  // where we are. A cadence change is announced once; every other poll carries the
+  // elapsed time, so a repeated line is a status report rather than the same sentence
+  // forever.
+  noteAuthBackoffPoll() {
+    const elapsed = Date.now() - this.authBackoffSince;
+    const phase = (elapsed < AUTH_BACKOFF_FAST_WINDOW_MS) ? 'fast' : 'slow';
+    
+    if (phase !== this.authBackoffPhase) {
+      this.authBackoffPhase = phase;
+      this.log.warn('Still unable to authenticate after 1 hour. Reducing checks to hourly. The coop will reconnect on its own once the credentials work again.');
+    } else if (this.authBackoffPolls > 0) {
+      if (phase === 'fast') {
+        this.log.warn(`Authentication still failing (${describeDuration(elapsed)}).`);
+      } else {
+        this.log.warn(`Omlet authentication has been failing for ${describeDuration(elapsed)}. Open the plugin settings to sign in again.`);
+      }
+    }
+    
+    this.authBackoffPolls++;
+    
+    return (phase === 'fast') ? AUTH_BACKOFF_FAST_MS : AUTH_BACKOFF_SLOW_MS;
+  }
+  
+  clearAuthBackoff() {
+    this.authFailures = 0;
+    
+    if (!this.authBackoffActive()) {
+      return;
+    }
+    
+    this.log.info(`Authentication recovered after ${describeDuration(Date.now() - this.authBackoffSince)}. Resuming normal polling.`);
+    
+    this.authBackoffSince = null;
+    this.authBackoffPhase = null;
+    this.authBackoffPolls = 0;
+  }
+  
+  async handleAuthError() {
+    this.refreshStoredToken();
+    
     // A credential from config.json that does not work must never block a working
     // one in storage - otherwise a typo'd key jams the plugin permanently, because
-    // config is only cleaned up after a successful poll.
+    // config is only cleaned up after a successful poll. The re-read above means this
+    // also catches a token the user has just saved from the settings page.
     if (this.storedToken && this.currentToken !== this.storedToken) {
-      this.log.warn('The API key in config.json was rejected; falling back to the saved credential');
+      if (this.authBackoffActive()) {
+        this.log.info('A newly saved credential is available; retrying with it');
+      } else {
+        this.log.warn('The API key in config.json was rejected; falling back to the saved credential');
+      }
+      
       this.bearerToken = this.storedToken;
       this.currentToken = this.storedToken;
       this.authFailures = 0;
@@ -847,41 +953,48 @@ class OmletCoopPlatform {
     // No password is persisted, so a dead key cannot be refreshed automatically.
     // It may have been revoked in the developer console, or the login session behind
     // it may have ended - the plugin cannot tell which, so cover both. A couple of
-    // failures could still be a server blip, so give it a few tries before giving up.
+    // failures could still be a server blip, so give it a few tries before backing off.
     if (!this.email || !this.password) {
       this.authFailures++;
       
-      if (this.authFailures < this.maxReloginAttempts) {
+      if (this.authFailures < this.maxAuthFailures) {
         if (this.debug) {
-          this.log.warn(`Authentication failed (${this.authFailures}/${this.maxReloginAttempts}), will retry`);
+          this.log.warn(`Authentication failed (${this.authFailures}/${this.maxAuthFailures}), will retry`);
         }
         return false;
       }
       
-      this.log.error('Saved API key is no longer valid. Open the Omlet Coop plugin settings and log in again, or paste a new developer API key.');
-      this.authFailedPermanently = true;
+      this.enterAuthBackoff();
       return false;
     }
     
-    this.reloginAttempts++;
-    this.log.warn(`Authentication error detected, attempting to re-login (attempt ${this.reloginAttempts}/${this.maxReloginAttempts})...`);
+    // Once backing off, this runs one attempt per back-off poll: the cadence limits
+    // how often we try, not whether we try. The per-attempt lines are suppressed there
+    // because the back-off status lines already say what is happening.
+    const quiet = this.authBackoffActive();
+    
+    this.authFailures++;
+    
+    if (!quiet) {
+      this.log.warn(`Authentication error detected, attempting to re-login (attempt ${this.authFailures}/${this.maxAuthFailures})...`);
+    }
     
     try {
       await this.login();
       this.log.info('Re-login successful');
-      
-      // Reset counter on success
-      this.reloginAttempts = 0;
+      this.clearAuthBackoff();
       
       return true;
     } catch (error) {
-      this.log.error('Failed to re-login:', error.message);
+      if (!quiet) {
+        this.log.error('Failed to re-login:', error.message);
+      }
       
-      if (this.reloginAttempts >= this.maxReloginAttempts) {
-        this.log.error(`Re-login failed ${this.maxReloginAttempts} times. Accessory will show "No Response" until Homebridge is restarted with valid credentials.`);
-        this.authFailedPermanently = true;
+      if (this.authFailures >= this.maxAuthFailures) {
+        this.enterAuthBackoff();
       } else {
-        this.log.warn(`Will retry on next operation (${this.maxReloginAttempts - this.reloginAttempts} attempts remaining)`);
+        const remaining = this.maxAuthFailures - this.authFailures;
+        this.log.warn(`Will retry on next operation (${remaining} attempt${remaining === 1 ? '' : 's'} remaining)`);
       }
       
       return false;
@@ -974,7 +1087,6 @@ class OmletCoopAccessory {
     this.pendingServiceChange = { light: null, battery: null };
     this.firstReconcileDone = false;
     this.lastFault = null;
-    this.pollingHalted = false;
     this.consecutiveFailures = 0;
     this.recoveryAttempted = { door: false, light: false };
     this.intents = { door: null, light: null };
@@ -1778,7 +1890,7 @@ class OmletCoopAccessory {
   async handlePollSuccess(status) {
     this.noteRequestSuccess();
     this.cachedStatus = status;
-    this.platform.authFailures = 0;
+    this.platform.clearAuthBackoff();
     this.platform.credentialVerified = true;
     
     await this.platform.settleCredentials();
@@ -1961,13 +2073,11 @@ class OmletCoopAccessory {
       return;
     }
     
-    // Nothing will change until someone fixes the credentials, so stop asking.
-    if (this.platform.authFailedPermanently) {
-      if (!this.pollingHalted) {
-        this.pollingHalted = true;
-        this.log.error('[Poll] Polling stopped. Update your credentials in the plugin settings, then restart Homebridge.');
-      }
-      this.stopPolling();
+    // Auth back-off outranks everything below it, including the fast cadence for a
+    // door in motion: there is no point watching a transition we cannot read.
+    if (this.platform.authBackoffActive()) {
+      this.fastPollCount = 0;
+      this.scheduleNextPoll(this.platform.noteAuthBackoffPoll());
       return;
     }
     
