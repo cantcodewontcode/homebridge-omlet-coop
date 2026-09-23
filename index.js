@@ -33,6 +33,31 @@ const DOOR_FAULT_BLOCKED = 'blocked';
 
 const DOOR_TRANSITION_STATES = DOOR_OPENING_STATES.concat(DOOR_CLOSING_STATES, ['stopping']);
 const LIGHT_TRANSITION_STATES = ['onpending', 'offpending'];
+const LIGHT_ON_STATES = ['on', 'onpending'];
+const LIGHT_OFF_STATES = ['off', 'offpending'];
+
+// Only the "*pending" states mean "command accepted but not acted on" - the state a
+// dropped command leaves behind. `opening` / `closing` are the door genuinely in
+// motion, and a door still moving after 90s is a mechanical problem, not a lost
+// command: forcing the opposite there would be wrong and potentially unsafe.
+const STUCK_RECOVERY = {
+  door: {
+    label: 'Door',
+    section: 'door',
+    stuckStates: ['openpending', 'closepending'],
+    intentOf: (state) => (state === 'openpending' ? 'open' : 'close'),
+    oppositeOf: (state) => (state === 'openpending' ? 'close' : 'open'),
+    settledMatches: (action, state) => (action === 'open' ? state === 'open' : state === 'closed')
+  },
+  light: {
+    label: 'Light',
+    section: 'light',
+    stuckStates: LIGHT_TRANSITION_STATES,
+    intentOf: (state) => (state === 'onpending' ? 'on' : 'off'),
+    oppositeOf: (state) => (state === 'onpending' ? 'off' : 'on'),
+    settledMatches: (action, state) => (action === 'on' ? state === 'on' : state === 'off')
+  }
+};
 const FAST_POLL_MS = 5000;
 const MAX_FAST_POLLS = 18; // ~90s at 5s, well past the ~16s a healthy door takes
 
@@ -944,9 +969,9 @@ class OmletCoopAccessory {
     this.firstReconcileDone = false;
     this.lastFault = null;
     this.pollingHalted = false;
-    this.lightRecoveryAttempted = false;
-    this.lightIntent = null;
-    this.reapplyLight = null;
+    this.recoveryAttempted = { door: false, light: false };
+    this.intents = { door: null, light: null };
+    this.reapply = { door: null, light: null };
     this.batteryOverrideRefused = false;
     
     // serial and firmware get updated after the first successful poll
@@ -1021,6 +1046,12 @@ class OmletCoopAccessory {
   // Record the expected pending state so reads agree with what was just asked for.
   setCachedState(section, value) {
     if (!this.cachedStatus || !this.cachedStatus.state || !this.cachedStatus.state[section]) {
+      return;
+    }
+    
+    // A null clears it, so the next poll's real value is used rather than a guess.
+    if (value === null) {
+      delete this.cachedStatus.state[section].state;
       return;
     }
     
@@ -1198,97 +1229,128 @@ class OmletCoopAccessory {
     return (lightState === 'on' || lightState === 'onpending');
   }
   
-  // A light command sent while the coop is busy is accepted by the API - the state
-  // flips to *pending - and then dropped by the device, leaving a pending state that
-  // never resolves. Observed stuck at "onpending" for over an hour.
+  // A command the coop cannot service is accepted by the API - the state flips to
+  // "*pending" - and then dropped by the device. The pending state does not resolve;
+  // Omlet's own service can take an hour to clear it.
   //
-  // The fix is the OPPOSITE command, not a retry. A dropped "on" means the light
-  // never came on, so sending "off" makes the reported state match reality. Retrying
-  // "on" would act on an intention the user may have abandoned minutes ago.
-  async recoverStuckLight() {
-    const lightState = this.cachedStatus?.state?.light?.state;
+  // The fix is the OPPOSITE command, never a retry. A dropped "on" means the light
+  // never came on, so "off" makes the reported state true again, and clears the jam
+  // in about three seconds. Re-sending the same command would itself be a redundant
+  // command, which is the thing that causes this in the first place.
+  async recoverStuck(kind) {
+    const spec = STUCK_RECOVERY[kind];
+    const state = this.cachedStatus?.state?.[spec.section]?.state;
     
-    if (!LIGHT_TRANSITION_STATES.includes(lightState)) {
-      this.lightRecoveryAttempted = false;
+    if (!spec.stuckStates.includes(state)) {
+      this.recoveryAttempted[kind] = false;
       return false;
     }
     
     // One attempt per stuck episode - never a loop.
-    if (this.lightRecoveryAttempted) {
+    if (this.recoveryAttempted[kind]) {
       return false;
     }
     
-    this.lightRecoveryAttempted = true;
+    this.recoveryAttempted[kind] = true;
     
-    const action = (lightState === 'onpending') ? 'off' : 'on';
-    const stuckIntent = (lightState === 'onpending') ? 'on' : 'off';
+    const action = spec.oppositeOf(state);
+    const original = spec.intentOf(state);
+    const intent = this.intents[kind];
     
-    // Clearing the jam leaves the light in the wrong state, so put it back - but
-    // only if this was our command, and only once. Re-applying a pending state we
-    // did not cause would be acting on somebody else's intention, and re-applying
-    // repeatedly would ping-pong the light if the coop keeps dropping commands.
-    const shouldReapply = this.lightIntent
-      && this.lightIntent.action === stuckIntent
-      && !this.lightIntent.reapplied;
+    // Only re-apply our own command, and only once. Re-applying a pending state we
+    // did not cause would act on somebody else's intention.
+    const shouldReapply = intent && intent.action === original && !intent.reapplied;
     
-    this.log.warn(`[Light] Light stuck in ${lightState} state, forcing a light ${action} command to resolve`);
+    this.log.warn(`[${spec.label}] ${spec.label} stuck in ${state} state, forcing a ${kind} ${action} command to resolve`);
     
     try {
-      await this.sendAction(action, 'Light');
+      await this.sendAction(action, spec.label);
       
       if (shouldReapply) {
-        this.lightIntent.reapplied = true;
-        this.reapplyLight = stuckIntent;
+        intent.reapplied = true;
+        this.reapply[kind] = original;
       }
-      this.setCachedState('light', action === 'on' ? 'onpending' : 'offpending');
+      
+      this.setCachedState(spec.section, null);
       this.scheduleNextPoll(FAST_POLL_MS);
       return true;
     } catch (error) {
-      this.log.error('[Light] Could not settle the stuck light state:', error.message);
+      this.log.error(`[${spec.label}] Could not settle the stuck state:`, error.message);
       return false;
     }
   }
   
-  // Sends the user's original command again once the stuck state has cleared.
-  async maybeReapplyLight() {
-    if (!this.reapplyLight) {
+  // Sends the original command again once the stuck state has cleared.
+  async maybeReapply(kind) {
+    const spec = STUCK_RECOVERY[kind];
+    
+    if (!this.reapply[kind]) {
       return;
     }
     
-    const lightState = this.cachedStatus?.state?.light?.state;
+    const state = this.cachedStatus?.state?.[spec.section]?.state;
     
     // Wait for the forced command to finish before acting again.
-    if (LIGHT_TRANSITION_STATES.includes(lightState)) {
+    if (spec.stuckStates.includes(state) || DOOR_TRANSITION_STATES.includes(state)) {
       return;
     }
     
-    const action = this.reapplyLight;
-    this.reapplyLight = null;
+    const action = this.reapply[kind];
+    this.reapply[kind] = null;
     
     // It may already be where the user wanted it.
-    if ((action === 'on') === (lightState === 'on')) {
+    if (spec.settledMatches(action, state)) {
       return;
     }
     
-    this.log.info(`[Light] Re-applying ${action} now the light has unstuck`);
+    this.log.info(`[${spec.label}] Re-applying ${action} now the ${kind} has unstuck`);
     
     try {
-      await this.sendAction(action, 'Light');
-      this.setCachedState('light', action === 'on' ? 'onpending' : 'offpending');
+      await this.sendAction(action, spec.label);
       this.scheduleNextPoll(FAST_POLL_MS);
     } catch (error) {
-      this.log.error('[Light] Could not re-apply the light command:', error.message);
+      this.log.error(`[${spec.label}] Could not re-apply the command:`, error.message);
     }
   }
   
   async setLightOn(value) {
     const action = value ? 'on' : 'off';
     
+    // Same guard as the door: a command putting the light into the state it is
+    // already in can leave the coop stuck in "*pending". Read fresh rather than
+    // trusting the cache, which can be a poll interval out of date.
+    let lightState = null;
+    
+    try {
+      const status = await this.pollDeviceState();
+      lightState = status?.state?.light?.state ?? null;
+    } catch (error) {
+      lightState = this.cachedStatus?.state?.light?.state ?? null;
+      
+      if (this.debug) {
+        this.log.warn(`[Light] Could not refresh state before ${action}, using last known state: ${lightState ?? 'unknown'}`);
+      }
+    }
+    
+    const alreadyThere = value
+      ? LIGHT_ON_STATES.includes(lightState)
+      : LIGHT_OFF_STATES.includes(lightState);
+    
+    if (alreadyThere) {
+      this.log.info(`[Light] Light is already ${value ? 'on' : 'off'}`);
+      
+      if (this.lightService) {
+        this.lightService.getCharacteristic(hap.Characteristic.On).updateValue(value);
+      }
+      
+      return;
+    }
+    
     try {
       await this.sendAction(action, 'Light');
       this.log.info('[Light]', action === 'on' ? 'Turning on light' : 'Turning off light');
       
-      this.lightIntent = { action: action, reapplied: false };
+      this.intents.light = { action: action, reapplied: false };
       this.setCachedState('light', value ? 'onpending' : 'offpending');
       
       if (this.lightService) {
@@ -1570,6 +1632,7 @@ class OmletCoopAccessory {
       await this.sendAction(action, 'Door');
       this.log.info('[Door]', action === 'open' ? 'Opening door' : 'Closing door');
       
+      this.intents.door = { action: action, reapplied: false };
       this.setCachedState('door', wantOpen ? 'openpending' : 'closepending');
       
       const newCurrentState = wantOpen
@@ -1662,7 +1725,8 @@ class OmletCoopAccessory {
     await this.platform.settleCredentials();
     this.platform.migrateTriState(status);
     this.reconcileServices(status);
-    await this.maybeReapplyLight();
+    await this.maybeReapply('door');
+    await this.maybeReapply('light');
 
     // update serial and firmware from the first real response
     if (!this.accessoryInfoUpdated) {
@@ -1731,6 +1795,14 @@ class OmletCoopAccessory {
           : hap.Characteristic.TargetDoorState.CLOSED;
         this.doorService.getCharacteristic(hap.Characteristic.TargetDoorState).updateValue(targetState);
 
+        if (!STUCK_RECOVERY.door.stuckStates.includes(doorState)) {
+          this.recoveryAttempted.door = false;
+          
+          if (this.intents.door && STUCK_RECOVERY.door.settledMatches(this.intents.door.action, doorState)) {
+            this.intents.door = null;
+          }
+        }
+        
         if (this.debug) {
           this.log.info('[Poll] Door:', doorState, '-> HomeKit:', currentState);
         }
@@ -1752,10 +1824,10 @@ class OmletCoopAccessory {
           this.lightService.getCharacteristic(hap.Characteristic.On).updateValue(isOn);
           
           if (!LIGHT_TRANSITION_STATES.includes(lightState)) {
-            this.lightRecoveryAttempted = false;
+            this.recoveryAttempted.light = false;
             
-            if (this.lightIntent && (this.lightIntent.action === 'on') === (lightState === 'on')) {
-              this.lightIntent = null;
+            if (this.intents.light && (this.intents.light.action === 'on') === (lightState === 'on')) {
+              this.intents.light = null;
             }
           }
           if (this.debug) {
@@ -1862,9 +1934,9 @@ class OmletCoopAccessory {
       
       this.log.warn(`[Poll] Still mid-change after ${Math.round(MAX_FAST_POLLS * FAST_POLL_MS / 1000)}s (${stuck.join(', ') || `door: ${doorState}, light: ${lightState}`}), returning to normal polling`);
       
-      // recoverStuckLight schedules its own fast poll to confirm the fix; falling
+      // recoverStuck schedules its own fast poll to confirm the fix; falling
       // through here would immediately overwrite it with the slow one.
-      const recovered = await this.recoverStuckLight();
+      const recovered = (await this.recoverStuck('door')) || (await this.recoverStuck('light'));
       
       this.fastPollCount = 0;
       
