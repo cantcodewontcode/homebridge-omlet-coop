@@ -59,19 +59,61 @@ const STUCK_RECOVERY = {
   }
 };
 const FAST_POLL_MS = 5000;
-// How many consecutive connection failures get logged normally. After this the
-// plugin goes quiet until the connection recovers: an Omlet outage is not made more
-// diagnosable by repeating the same line every 30 seconds for an hour.
-const MAX_LOGGED_FAILURES = 3;
 const MAX_FAST_POLLS = 18; // ~90s at 5s, well past the ~16s a healthy door takes
 
-// Auth failures decay rather than stopping. A revoked key and a server outage are
-// indistinguishable from the response Omlet sends, so giving up permanently would
-// strand anyone whose outage simply ran long: five-minute checks for the first hour,
-// hourly after that, indefinitely.
-const AUTH_BACKOFF_FAST_MS = 5 * 60 * 1000;
-const AUTH_BACKOFF_FAST_WINDOW_MS = 60 * 60 * 1000;
-const AUTH_BACKOFF_SLOW_MS = 60 * 60 * 1000;
+// One back-off, three causes. A dropped network, an Omlet outage and a revoked key
+// last nothing like each other, and the cost of guessing wrong is how long we stay
+// broken after the cause clears - so each gets its own ceiling rather than a shared
+// compromise. Nothing in Omlet's response distinguishes a revoked credential from a
+// transient 401 (see docs/OMLET-API.md), so auth never gives up; it just gets cheap.
+//
+// Each plan runs `fast` for `window`, then `slow` forever. `severity` decides which
+// cause wins when one arrives while another is already backing off.
+const BACKOFF_PLANS = {
+  transport: {
+    severity: 1,
+    threshold: 3,
+    onEnter: n => `Lost contact with Omlet after ${n} failed attempts. Still trying, every 30 seconds.`,
+    onRecover: d => `Contact with Omlet recovered after ${d}. Resuming normal polling.`,
+    tiers: [
+      // Same cadence as normal polling: a brief blip should recover the moment the
+      // network does, so only the logging goes quiet.
+      { until: 5 * 60 * 1000, every: 30 * 1000, status: null },
+      { until: 30 * 60 * 1000, every: 2 * 60 * 1000,
+        announce: 'Still no contact with Omlet after 5 minutes. Reducing checks to every 2 minutes.',
+        status: d => `Still cannot reach Omlet (${d}).` },
+      { every: 15 * 60 * 1000,
+        announce: 'Still no contact with Omlet after 30 minutes. Reducing checks to every 15 minutes.',
+        status: d => `Still cannot reach Omlet (${d}).` }
+    ]
+  },
+  server: {
+    severity: 2,
+    threshold: 3,
+    onEnter: n => `Omlet returned a server error ${n} times. Retrying every minute.`,
+    onRecover: d => `Omlet recovered after ${d}. Resuming normal polling.`,
+    tiers: [
+      { until: 15 * 60 * 1000, every: 60 * 1000,
+        status: d => `Omlet has been returning server errors for ${d}.` },
+      { every: 15 * 60 * 1000,
+        announce: 'Omlet is still returning server errors after 15 minutes. Reducing checks to every 15 minutes.',
+        status: d => `Omlet has been returning server errors for ${d}.` }
+    ]
+  },
+  auth: {
+    severity: 3,
+    threshold: 3,
+    onEnter: n => `Could not authenticate with Omlet after ${n} attempts. Retrying every 5 minutes. If needed, open the plugin settings to sign in again.`,
+    onRecover: d => `Authentication recovered after ${d}. Resuming normal polling.`,
+    tiers: [
+      { until: 60 * 60 * 1000, every: 5 * 60 * 1000,
+        status: d => `Authentication still failing (${d}).` },
+      { every: 60 * 60 * 1000,
+        announce: 'Could not authenticate with Omlet after 1 hour. Retrying hourly. If needed, open the plugin settings to sign in again.',
+        status: d => `Omlet authentication has been failing for ${d}. If needed, open the plugin settings to sign in again.` }
+    ]
+  }
+};
 
 function describeDuration(ms) {
   const minutes = Math.round(ms / 60000);
@@ -80,9 +122,11 @@ function describeDuration(ms) {
     return `${minutes} minute${minutes === 1 ? '' : 's'}`;
   }
   
-  const hours = Math.round(minutes / 60);
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  const spoken = `${hours} hour${hours === 1 ? '' : 's'}`;
   
-  return `${hours} hour${hours === 1 ? '' : 's'}`;
+  return rest ? `${spoken} ${rest} minute${rest === 1 ? '' : 's'}` : spoken;
 }
 
 const DOOR_OPEN_STATES = ['open'].concat(DOOR_OPENING_STATES);
@@ -164,11 +208,8 @@ class OmletCoopPlatform {
     this.currentToken = null;
     this.authMode = null;
     this.storage = this.api.user.storagePath() + '/omlet-coop-tokens.json';
-    this.authFailures = 0;
-    this.maxAuthFailures = 3;
-    this.authBackoffSince = null;
-    this.authBackoffPhase = null;
-    this.authBackoffPolls = 0;
+    this.failures = { transport: 0, server: 0, auth: 0 };
+    this.backoff = null;
     
     this.accessories = [];
     
@@ -261,7 +302,7 @@ class OmletCoopPlatform {
     const tokenRegex = /^[A-Za-z0-9_\-]{1,128}$/;
     
     if (!tokenRegex.test(token)) {
-      this.log.error(`Invalid ${fieldName}: must be 1-128 characters, letters, digits, underscore or hyphen`);
+      this.log.error(`Invalid ${fieldName}: please check and correct`);
       return undefined;
     }
     
@@ -457,7 +498,7 @@ class OmletCoopPlatform {
     if (removed) {
       this.password = undefined;
       this.email = undefined;
-      this.log.info('Credentials moved out of config.json into Homebridge storage');
+      this.log.info('Credentials removed from config.json successfully');
     }
   }
   
@@ -563,8 +604,7 @@ class OmletCoopPlatform {
     });
     
     if (wrote) {
-      const parts = Object.keys(next).map(key => `${key}: ${next[key]}`);
-      this.log.info(`Migrated settings to the new Auto options (${parts.join(', ')})`);
+      this.log.info('Migrated settings to new syntax');
     }
   }
   
@@ -876,58 +916,83 @@ class OmletCoopPlatform {
     }
   }
   
-  authBackoffActive() {
-    return this.authBackoffSince !== null;
+  backoffActive() {
+    return this.backoff !== null;
   }
   
-  enterAuthBackoff() {
-    if (this.authBackoffActive()) {
+  // A deeper cause takes over a shallower one - an outage that turns out to be a
+  // rejected credential must not keep retrying on the network's schedule - but never
+  // the reverse, or a single timeout would reset an hour of auth back-off.
+  enterBackoff(reason) {
+    const plan = BACKOFF_PLANS[reason];
+    
+    if (this.backoff && BACKOFF_PLANS[this.backoff.reason].severity >= plan.severity) {
       return;
     }
     
-    this.authBackoffSince = Date.now();
-    this.authBackoffPhase = 'fast';
-    this.authBackoffPolls = 0;
+    this.backoff = { reason, since: Date.now(), tier: 0, polls: 0 };
+    this.log.warn(plan.onEnter(plan.threshold));
+  }
+  
+  // Everything below the threshold is reported as it happens, so a one-off failure is
+  // still visible. Past the threshold the back-off's own lines take over.
+  noteFailure(reason, context, message) {
+    this.failures[reason]++;
     
-    this.log.warn(`Could not authenticate with Omlet after ${this.maxAuthFailures} attempts. Retrying every 5 minutes. Open the Omlet Coop plugin settings to sign in again or paste a new API key.`);
+    if (this.failures[reason] >= BACKOFF_PLANS[reason].threshold) {
+      this.enterBackoff(reason);
+      return;
+    }
+    
+    // Something equally or more serious is already backing off, and its lines are the
+    // narrative - a second cause reporting underneath it is just noise.
+    if (this.backoff && BACKOFF_PLANS[this.backoff.reason].severity >= BACKOFF_PLANS[reason].severity) {
+      return;
+    }
+    
+    if (message) {
+      this.log.error(context ? `[${context}] ${message}` : message);
+    }
   }
   
   // Called by the poll loop while backing off: returns how long to wait, and reports
   // where we are. A cadence change is announced once; every other poll carries the
   // elapsed time, so a repeated line is a status report rather than the same sentence
   // forever.
-  noteAuthBackoffPoll() {
-    const elapsed = Date.now() - this.authBackoffSince;
-    const phase = (elapsed < AUTH_BACKOFF_FAST_WINDOW_MS) ? 'fast' : 'slow';
+  noteBackoffPoll() {
+    const plan = BACKOFF_PLANS[this.backoff.reason];
+    const elapsed = Date.now() - this.backoff.since;
+    const index = plan.tiers.findIndex(t => t.until === undefined || elapsed < t.until);
+    const tier = plan.tiers[index];
     
-    if (phase !== this.authBackoffPhase) {
-      this.authBackoffPhase = phase;
-      this.log.warn('Still unable to authenticate after 1 hour. Reducing checks to hourly. The coop will reconnect on its own once the credentials work again.');
-    } else if (this.authBackoffPolls > 0) {
-      if (phase === 'fast') {
-        this.log.warn(`Authentication still failing (${describeDuration(elapsed)}).`);
-      } else {
-        this.log.warn(`Omlet authentication has been failing for ${describeDuration(elapsed)}. Open the plugin settings to sign in again.`);
+    if (index !== this.backoff.tier) {
+      this.backoff.tier = index;
+      
+      if (tier.announce) {
+        this.log.warn(tier.announce);
       }
+    } else if (this.backoff.polls > 0 && tier.status) {
+      this.log.warn(tier.status(describeDuration(elapsed)));
     }
     
-    this.authBackoffPolls++;
+    this.backoff.polls++;
     
-    return (phase === 'fast') ? AUTH_BACKOFF_FAST_MS : AUTH_BACKOFF_SLOW_MS;
+    return tier.every;
   }
   
-  clearAuthBackoff() {
-    this.authFailures = 0;
+  noteSuccess() {
+    this.failures.transport = 0;
+    this.failures.server = 0;
+    this.failures.auth = 0;
     
-    if (!this.authBackoffActive()) {
+    if (!this.backoff) {
       return;
     }
     
-    this.log.info(`Authentication recovered after ${describeDuration(Date.now() - this.authBackoffSince)}. Resuming normal polling.`);
+    const plan = BACKOFF_PLANS[this.backoff.reason];
+    this.log.info(plan.onRecover(describeDuration(Date.now() - this.backoff.since)));
     
-    this.authBackoffSince = null;
-    this.authBackoffPhase = null;
-    this.authBackoffPolls = 0;
+    this.backoff = null;
   }
   
   async handleAuthError() {
@@ -938,7 +1003,7 @@ class OmletCoopPlatform {
     // config is only cleaned up after a successful poll. The re-read above means this
     // also catches a token the user has just saved from the settings page.
     if (this.storedToken && this.currentToken !== this.storedToken) {
-      if (this.authBackoffActive()) {
+      if (this.backoffActive()) {
         this.log.info('A newly saved credential is available; retrying with it');
       } else {
         this.log.warn('The API key in config.json was rejected; falling back to the saved credential');
@@ -946,7 +1011,7 @@ class OmletCoopPlatform {
       
       this.bearerToken = this.storedToken;
       this.currentToken = this.storedToken;
-      this.authFailures = 0;
+      this.failures.auth = 0;
       return true;
     }
     
@@ -955,34 +1020,34 @@ class OmletCoopPlatform {
     // it may have ended - the plugin cannot tell which, so cover both. A couple of
     // failures could still be a server blip, so give it a few tries before backing off.
     if (!this.email || !this.password) {
-      this.authFailures++;
+      this.failures.auth++;
       
-      if (this.authFailures < this.maxAuthFailures) {
+      if (this.failures.auth < BACKOFF_PLANS.auth.threshold) {
         if (this.debug) {
-          this.log.warn(`Authentication failed (${this.authFailures}/${this.maxAuthFailures}), will retry`);
+          this.log.warn(`Authentication failed (${this.failures.auth}/${BACKOFF_PLANS.auth.threshold}), will retry`);
         }
         return false;
       }
       
-      this.enterAuthBackoff();
+      this.enterBackoff('auth');
       return false;
     }
     
     // Once backing off, this runs one attempt per back-off poll: the cadence limits
     // how often we try, not whether we try. The per-attempt lines are suppressed there
     // because the back-off status lines already say what is happening.
-    const quiet = this.authBackoffActive();
+    const quiet = this.backoffActive();
     
-    this.authFailures++;
+    this.failures.auth++;
     
     if (!quiet) {
-      this.log.warn(`Authentication error detected, attempting to re-login (attempt ${this.authFailures}/${this.maxAuthFailures})...`);
+      this.log.warn(`Authentication error detected, attempting to re-login (attempt ${this.failures.auth}/${BACKOFF_PLANS.auth.threshold})...`);
     }
     
     try {
       await this.login();
       this.log.info('Re-login successful');
-      this.clearAuthBackoff();
+      this.noteSuccess();
       
       return true;
     } catch (error) {
@@ -990,10 +1055,10 @@ class OmletCoopPlatform {
         this.log.error('Failed to re-login:', error.message);
       }
       
-      if (this.authFailures >= this.maxAuthFailures) {
-        this.enterAuthBackoff();
+      if (this.failures.auth >= BACKOFF_PLANS.auth.threshold) {
+        this.enterBackoff('auth');
       } else {
-        const remaining = this.maxAuthFailures - this.authFailures;
+        const remaining = BACKOFF_PLANS.auth.threshold - this.failures.auth;
         this.log.warn(`Will retry on next operation (${remaining} attempt${remaining === 1 ? '' : 's'} remaining)`);
       }
       
@@ -1003,7 +1068,7 @@ class OmletCoopPlatform {
   
   removeAllAccessories() {
     if (this.accessories.length > 0) {
-      this.log.info(`Disconnected: removing ${this.accessories.length} accessory(s) from HomeKit`);
+      this.log.info(`Configuration cleared: removing ${this.accessories.length} accessory(s) from Homebridge.`);
       this.api.unregisterPlatformAccessories('homebridge-omlet', 'OmletCoop', this.accessories);
       this.accessories = [];
     }
@@ -1087,7 +1152,6 @@ class OmletCoopAccessory {
     this.pendingServiceChange = { light: null, battery: null };
     this.firstReconcileDone = false;
     this.lastFault = null;
-    this.consecutiveFailures = 0;
     this.recoveryAttempted = { door: false, light: false };
     this.intents = { door: null, light: null };
     this.reapply = { door: null, light: null };
@@ -1161,37 +1225,6 @@ class OmletCoopAccessory {
   
   // One line per failure while something is clearly wrong, then silence until it
   // recovers - and one line to say it did.
-  noteRequestFailure(context, message) {
-    this.consecutiveFailures++;
-    
-    if (this.consecutiveFailures < MAX_LOGGED_FAILURES) {
-      this.log.error(`[${context}] ${message}`);
-      return;
-    }
-    
-    if (this.consecutiveFailures === MAX_LOGGED_FAILURES) {
-      this.log.error(`[${context}] ${message}`);
-      this.log.warn(`[${context}] Further connection errors will be logged only in debug mode until the connection recovers.`);
-      return;
-    }
-    
-    if (this.debug) {
-      this.log.warn(`[${context}] ${message}`);
-    }
-  }
-  
-  noteRequestSuccess() {
-    if (this.consecutiveFailures === 0) {
-      return;
-    }
-    
-    if (this.consecutiveFailures >= MAX_LOGGED_FAILURES) {
-      this.log.info(`Connection to Omlet recovered after ${this.consecutiveFailures} failed attempts`);
-    }
-    
-    this.consecutiveFailures = 0;
-  }
-  
   // After a command, HomeKit immediately re-reads the characteristic. The getters
   // read the cache, and the cache still holds the pre-command state until the next
   // poll - so the control visibly snaps back before correcting itself seconds later.
@@ -1489,7 +1522,7 @@ class OmletCoopAccessory {
       : LIGHT_OFF_STATES.includes(lightState);
     
     if (alreadyThere) {
-      this.log.info(`[Light] Light is already ${value ? 'on' : 'off'}`);
+      this.log.info(`[Light] Received request to turn the light ${value ? 'on' : 'off'}, but it is already ${value ? 'on' : 'off'}`);
       
       if (this.lightService) {
         this.lightService.getCharacteristic(hap.Characteristic.On).updateValue(value);
@@ -1601,6 +1634,13 @@ class OmletCoopAccessory {
             resolve();
           } else {
             this.log.error(`[${context}] HTTP Error`, res.statusCode, data || '');
+            
+            // A command is user-initiated, so its failure is always reported - but a
+            // server fault still counts towards the shared back-off.
+            if (![401, 403, 404].includes(res.statusCode)) {
+              this.platform.noteFailure('server', context, null);
+            }
+            
             const error = new Error(`HTTP ${res.statusCode}`);
             error.statusCode = res.statusCode;
             error.response = data;
@@ -1614,7 +1654,7 @@ class OmletCoopAccessory {
       req.on('timeout', () => {
         timedOut = true;
         req.destroy();
-        this.noteRequestFailure(context, 'Request timeout after 10 seconds');
+        this.platform.noteFailure('transport', context, 'Request timeout after 10 seconds');
         reject(new Error('Request timeout'));
       });
       
@@ -1625,7 +1665,7 @@ class OmletCoopAccessory {
           return;
         }
         
-        this.noteRequestFailure(context, `Network error: ${error.message}`);
+        this.platform.noteFailure('transport', context, `Network error: ${error.message}`);
         reject(error);
       });
       
@@ -1684,13 +1724,17 @@ class OmletCoopAccessory {
               reject(new Error('Failed to parse JSON response'));
             }
           } else {
-            const isAuthError = (res.statusCode === 401 || res.statusCode === 403);
-            
-            // Auth failures are reported once, in context, by handleAuthError -
-            // repeating the same 401 every cycle is noise. Everything else is a
-            // real problem and must not be swallowed.
-            if (this.debug || !isAuthError) {
+            // 401/403 are reported by handleAuthError and 404 by handleDeviceNotFound,
+            // both of which have their own handling - neither is a server fault.
+            // Anything else is, and backs off rather than repeating every poll.
+            if (res.statusCode === 401 || res.statusCode === 403) {
+              if (this.debug) {
+                this.log.error(`[${context}] HTTP Error`, res.statusCode, data || '');
+              }
+            } else if (res.statusCode === 404) {
               this.log.error(`[${context}] HTTP Error`, res.statusCode, data || '');
+            } else {
+              this.platform.noteFailure('server', context, `HTTP ${res.statusCode} ${data || ''}`.trim());
             }
             const error = new Error(`HTTP ${res.statusCode}`);
             error.statusCode = res.statusCode;
@@ -1705,7 +1749,7 @@ class OmletCoopAccessory {
       req.on('timeout', () => {
         timedOut = true;
         req.destroy();
-        this.noteRequestFailure(context, 'Request timeout after 10 seconds');
+        this.platform.noteFailure('transport', context, 'Request timeout after 10 seconds');
         reject(new Error('Request timeout'));
       });
       
@@ -1716,7 +1760,7 @@ class OmletCoopAccessory {
           return;
         }
         
-        this.noteRequestFailure(context, `Network error: ${error.message}`);
+        this.platform.noteFailure('transport', context, `Network error: ${error.message}`);
         reject(error);
       });
       
@@ -1781,7 +1825,7 @@ class OmletCoopAccessory {
       : DOOR_CLOSED_STATES.includes(doorState);
     
     if (alreadyThere) {
-      this.log.info(`[Door] Door is already ${wantOpen ? 'open' : 'closed'}`);
+      this.log.info(`[Door] Received request to ${wantOpen ? 'open' : 'close'} the door, but it is already ${wantOpen ? 'open' : 'closed'}`);
       
       // Report the real state back. From HomeKit's point of view the request
       // succeeded - the door is where it was asked to be.
@@ -1888,9 +1932,8 @@ class OmletCoopAccessory {
   // to skip it, so a credential that only worked on the second attempt never got
   // marked as verified and config.json was never cleaned up.
   async handlePollSuccess(status) {
-    this.noteRequestSuccess();
     this.cachedStatus = status;
-    this.platform.clearAuthBackoff();
+    this.platform.noteSuccess();
     this.platform.credentialVerified = true;
     
     await this.platform.settleCredentials();
@@ -2075,9 +2118,9 @@ class OmletCoopAccessory {
     
     // Auth back-off outranks everything below it, including the fast cadence for a
     // door in motion: there is no point watching a transition we cannot read.
-    if (this.platform.authBackoffActive()) {
+    if (this.platform.backoffActive()) {
       this.fastPollCount = 0;
-      this.scheduleNextPoll(this.platform.noteAuthBackoffPoll());
+      this.scheduleNextPoll(this.platform.noteBackoffPoll());
       return;
     }
     
