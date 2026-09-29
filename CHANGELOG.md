@@ -1,11 +1,10 @@
 # Changelog
 
-## [0.9.9] - 2026-09-22
+## [0.9.9] - 2026-09-28
 
 ### Setup
 - Setup adds support for the official Omlet developer API keys. This is the only officially-supported sign-in method from Omlet, and keys can be managed and revoked on their portal.
 - If a coop is factory reset or replaced, the HomeKit accessories are preserved by the replacement coop (or reset coop), instead of appearing as a new coop.
-- Repeated authentication failures no longer fill the log; polling stops until credentials are fixed.
 
 ### Security Enhancements
 - Omlet account email and password are no longer stored in config. Existing credentials are cleared on upgrade.
@@ -19,9 +18,11 @@
 - Obstruction is now reported to HomeKit when the door reports a blocked fault.
 
 ### Omlet Server Reliability
-Workarounds implemented for a known Omlet server issue wherein a command to put an accessory in the state it is already in can cause a "stuck pending" state for the accessory. (For example, sending a command to open an already-open door causes the door to stick in a "pending open" state for ~1 hour):
-- When sending a command to an accessory, the existing state is checked, and the command is aborted if the accessory is already in the correct state.
-- When an accessory is detected as being in a stuck state (i.e. "pending" for over 90 seconds) the system auto-flips the accessory. (For example, if stuck in "pending on" state, the system forces an "off" command followed by an "on" command.)
+- Workaround implemented for a known Omlet server issue wherein a command to put an accessory in the state it is already in can cause a "stuck pending" state for the accessory. (For example, sending a command to open an already-open door causes the door to stick in a "pending open" state for ~1 hour):
+  - When sending a command to an accessory, the existing state is checked, and the command is aborted if the accessory is already in the correct state.
+  - When an accessory is detected as being in a stuck state (i.e. "pending" for over 90 seconds) the system auto-flips the accessory. (For example, if stuck in "pending on" state, the system forces an "off" command followed by an "on" command.)
+- Authentication failures no longer stop the plugin permanently. After three failed attempts it progressively backs off on attempts, settling at hourly attempts until authentication succeeds. A temporary Omlet outage or a network problem no longer needs a Homebridge restart to recover from. (Reported by @kylemhall, #4)
+- Connection problems and Omlet server errors now back off in the same way, each on its own schedule: a dropped network retries quickly and recovers fast, while repeated server errors slow to periodic checks instead of filling the log.
 
 ### Performance Improvements
 - 5-second polling interval when the door or light state is changing, to more quickly confirm when the door has finished opening or closing.
@@ -32,6 +33,8 @@ Workarounds implemented for a known Omlet server issue wherein a command to put 
 - Poll interval no longer saves an out-of-range or empty value.
 - Accessories report as unreachable using the proper HomeKit status instead of throwing.
 - Login requests send the correct Content-Length for non-ASCII passwords.
+- Clearer and more consistent wording on setup, migration, and door and light log messages.
+- A request that times out is no longer reported twice.
 
 ## [0.9.7] - 2026-02-18
 - Fixed config schema: moved required fields to object-level array per JSON Schema spec
