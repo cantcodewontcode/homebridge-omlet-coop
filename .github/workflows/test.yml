@@ -1,0 +1,74 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # Both ends of the range package.json declares support for.
+        node: ['20', '22']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # The plugin itself needs no dependencies - index.js uses only https and fs -
+      # but installing proves the lockfile is still usable, which is its own check.
+      - run: npm ci --no-audit --no-fund
+
+      - run: npm test
+
+  package:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # docs/OMLET-API.md shipped in a published tarball once, because .npmignore
+      # overrides .gitignore entirely and did not exclude it. This makes that
+      # mistake impossible to repeat quietly.
+      - name: Check what would be published
+        run: |
+          npm pack --dry-run --json > /tmp/pack.json
+          node -e '
+            const files = require("/tmp/pack.json")[0].files.map(f => f.path);
+            const forbidden = files.filter(f =>
+              f.startsWith("docs/") ||
+              f.startsWith("test/") ||
+              f.startsWith(".github/") ||
+              f === "CLAUDE.md" ||
+              f === ".npmrc" ||
+              (f.endsWith(".md") && !["README.md", "CHANGELOG.md"].includes(f)));
+
+            console.log("Tarball contents:");
+            files.forEach(f => console.log("  " + f));
+
+            if (forbidden.length) {
+              console.error("\nThese must not be published: " + forbidden.join(", "));
+              process.exit(1);
+            }
+
+            for (const required of ["index.js", "package.json", "config.schema.json"]) {
+              if (!files.includes(required)) {
+                console.error("\nMissing from the tarball: " + required);
+                process.exit(1);
+              }
+            }
+
+            console.log("\nOK - " + files.length + " files, nothing private.");
+          '
