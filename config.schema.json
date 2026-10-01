@@ -5,7 +5,10 @@
   "customUi": true,
   "schema": {
     "type": "object",
-    "required": ["name", "countryCode"],
+    "required": [
+      "name",
+      "countryCode"
+    ],
     "properties": {
       "name": {
         "title": "Name",
@@ -28,7 +31,21 @@
         "title": "Country Code",
         "type": "string",
         "default": "US",
-        "enum": ["AU", "DE", "DK", "ES", "FR", "GB", "IE", "IT", "NL", "NO", "PL", "SE", "US"],
+        "enum": [
+          "AU",
+          "DE",
+          "DK",
+          "ES",
+          "FR",
+          "GB",
+          "IE",
+          "IT",
+          "NL",
+          "NO",
+          "PL",
+          "SE",
+          "US"
+        ],
         "description": "Your country"
       },
       "apiServer": {
@@ -41,7 +58,10 @@
         "title": "Connection Method",
         "type": "string",
         "default": "key",
-        "enum": ["key", "account"],
+        "enum": [
+          "key",
+          "account"
+        ],
         "description": "Which setup method the plugin settings page should open on. Set automatically; not used at runtime."
       },
       "bearerToken": {
@@ -73,8 +93,18 @@
         "type": "string",
         "default": "auto",
         "oneOf": [
-          { "title": "Auto-discover", "enum": ["auto"] },
-          { "title": "Do not display", "enum": ["off"] }
+          {
+            "title": "Auto-discover",
+            "enum": [
+              "auto"
+            ]
+          },
+          {
+            "title": "Do not display",
+            "enum": [
+              "off"
+            ]
+          }
         ]
       },
       "enableBattery": {
@@ -82,10 +112,31 @@
         "type": "string",
         "default": "auto",
         "oneOf": [
-          { "title": "Automatic by power type", "enum": ["auto"] },
-          { "title": "Always show", "enum": ["on"] },
-          { "title": "Always hide", "enum": ["off"] }
+          {
+            "title": "Automatic by power type",
+            "enum": [
+              "auto"
+            ]
+          },
+          {
+            "title": "Always show",
+            "enum": [
+              "on"
+            ]
+          },
+          {
+            "title": "Always hide",
+            "enum": [
+              "off"
+            ]
+          }
         ]
+      },
+      "enableLightSensor": {
+        "title": "Light Level Sensor",
+        "type": "boolean",
+        "default": false,
+        "description": "Off by default. Publishes the coop's light reading as a HomeKit light sensor. HomeKit measures light in lux, but Omlet reports its own 0-100 scale, so the number shown is that scale and not a real lux value. It also sits at 100 for most of the day, changing only around dawn and dusk - useful for watching the light come and go, not for measuring brightness."
       }
     }
   },

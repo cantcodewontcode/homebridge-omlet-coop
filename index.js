@@ -129,6 +129,13 @@ function describeDuration(ms) {
   return rest ? `${spoken} ${rest} minute${rest === 1 ? '' : 's'}` : spoken;
 }
 
+const SERVICE_LABELS = { light: 'Coop light', battery: 'Battery', lightSensor: 'Light level sensor' };
+
+// HomeKit's CurrentAmbientLightLevel is defined in lux and bottoms out at 0.0001.
+// Omlet reports its own 0-100 scale, so what we publish is that number, not lux - the
+// option is off by default and says so in the settings. See docs/ROADMAP.md.
+const MIN_AMBIENT_LIGHT = 0.0001;
+
 const DOOR_OPEN_STATES = ['open'].concat(DOOR_OPENING_STATES);
 const DOOR_CLOSED_STATES = ['closed'].concat(DOOR_CLOSING_STATES);
 
@@ -196,6 +203,11 @@ class OmletCoopPlatform {
       this.enableLight = 'auto';
     }
     this.enableBattery = this.normalizeTriState(config.enableBattery, 'enableBattery');
+    
+    // Strictly opt-in, and a plain boolean rather than a tri-state: there is no
+    // sensible "auto" for a reading whose units we cannot honour. See
+    // applyLightSensorService for why.
+    this.enableLightSensor = config.enableLightSensor === true;
     this.triStateMigrated = false;
     this.credentialsSettled = false;
     this.credentialVerified = false;
@@ -1166,7 +1178,7 @@ class OmletCoopAccessory {
     this.pollTimer = null;
     this.pollGeneration = 0;
     this.fastPollCount = 0;
-    this.pendingServiceChange = { light: null, battery: null };
+    this.pendingServiceChange = { light: null, battery: null, lightSensor: null };
     this.firstReconcileDone = false;
     this.lastFault = null;
     this.recoveryAttempted = { door: false, light: false };
@@ -1383,7 +1395,7 @@ class OmletCoopAccessory {
     // rather than making a fresh install wait a poll cycle for its accessories.
     if (!this.firstReconcileDone) {
       this.pendingServiceChange[kind] = null;
-      this.log.info(`${kind === 'light' ? 'Coop light' : 'Battery'} ${desired ? 'detected, adding accessory' : 'not present, no accessory added'}`);
+      this.log.info(`${SERVICE_LABELS[kind]} ${desired ? 'detected, adding accessory' : 'not present, no accessory added'}`);
       apply(desired);
       return;
     }
@@ -1397,25 +1409,98 @@ class OmletCoopAccessory {
     
     if (pending.count >= 2) {
       this.pendingServiceChange[kind] = null;
-      this.log.info(`${kind === 'light' ? 'Coop light' : 'Battery'} ${desired ? 'detected, adding accessory' : 'no longer present, removing accessory'}`);
+      this.log.info(`${SERVICE_LABELS[kind]} ${desired ? 'detected, adding accessory' : 'no longer present, removing accessory'}`);
       apply(desired);
     }
   }
   
   reconcileServices(status) {
-    const before = `${this.hasLightService()}|${this.hasBatteryService()}`;
+    const signature = () => `${this.hasLightService()}|${this.hasBatteryService()}|${this.hasLightSensorService()}`;
+    const before = signature();
     
     this.reconcileService('light', this.desiredLight(status),
       () => this.hasLightService(), (v) => this.applyLightService(v));
     this.reconcileService('battery', this.desiredBattery(status),
       () => this.hasBatteryService(), (v) => this.applyBatteryService(v));
+    this.reconcileService('lightSensor', this.desiredLightSensor(status),
+      () => this.hasLightSensorService(), (v) => this.applyLightSensorService(v));
     
     this.firstReconcileDone = true;
     
-    if (before !== `${this.hasLightService()}|${this.hasBatteryService()}`) {
+    if (before !== signature()) {
       // Without this the added or removed service is not published, and the tile
       // only appears (or disappears) after the next Homebridge restart.
       this.platform.api.updatePlatformAccessories([this.accessory]);
+    }
+  }
+  
+  // light level sensor
+  
+  lightLevel(status = this.cachedStatus) {
+    const raw = status?.state?.door?.lightLevel;
+    
+    if (raw === undefined || raw === null || raw === '') {
+      return null;
+    }
+    
+    const level = Number(raw);
+    return Number.isFinite(level) ? Math.max(0, level) : null;
+  }
+  
+  hasLightSensorService() {
+    return !!this.accessory.getService(hap.Service.LightSensor);
+  }
+  
+  // Opt-in only, and only when the door actually reports a reading.
+  desiredLightSensor(status) {
+    return this.platform.enableLightSensor && this.lightLevel(status) !== null;
+  }
+  
+  // What is published is Omlet's own 0-100 scale, under a characteristic HomeKit
+  // defines in lux. That mismatch is deliberate and the option is off by default:
+  // the value saturates at 100 for most of the day and carries real information only
+  // around dawn and dusk, so it is useful for watching the light change rather than
+  // for reading an illuminance. docs/ROADMAP.md has the sampled data behind that.
+  applyLightSensorService(enabled) {
+    const existing = this.accessory.getService(hap.Service.LightSensor);
+    
+    if (!enabled) {
+      if (existing) {
+        this.doorService.removeLinkedService(existing);
+        this.accessory.removeService(existing);
+      }
+      this.lightSensorService = null;
+      return;
+    }
+    
+    const service = existing || this.accessory.addService(hap.Service.LightSensor);
+    service.setCharacteristic(hap.Characteristic.Name, 'Coop Light Level');
+    service
+      .getCharacteristic(hap.Characteristic.CurrentAmbientLightLevel)
+      .onGet(this.getAmbientLight.bind(this));
+    this.doorService.addLinkedService(service);
+    this.lightSensorService = service;
+    
+    this.log.info('Light level sensor enabled. It reports Omlet\'s own 0-100 scale, not lux.');
+  }
+  
+  async getAmbientLight() {
+    const level = this.lightLevel();
+    
+    if (level === null) {
+      throw unavailable();
+    }
+    
+    return Math.max(MIN_AMBIENT_LIGHT, level);
+  }
+  
+  pushLightLevelToHomeKit(status) {
+    const level = this.lightLevel(status);
+    
+    if (this.lightSensorService && level !== null) {
+      this.lightSensorService
+        .getCharacteristic(hap.Characteristic.CurrentAmbientLightLevel)
+        .updateValue(Math.max(MIN_AMBIENT_LIGHT, level));
     }
   }
   
@@ -2149,6 +2234,8 @@ class OmletCoopAccessory {
           }
         }
       }
+      
+      this.pushLightLevelToHomeKit(status);
     } catch (error) {
       this.log.error('[Poll] Failed to push state to HomeKit:', error.message);
     }

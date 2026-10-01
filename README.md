@@ -65,7 +65,25 @@ Rarely needed:
 
 - **API Server**: Override the default API server hostname (if ever needed)
 - **Poll Interval**: Reduce how often the plugin checks device status (minimum: 30 seconds)
+- **Light Level Sensor**: Off by default. See below before turning it on
 - **Debug Mode**: Enable detailed logging for troubleshooting
+
+#### About the Light Level Sensor
+
+The coop door has a light sensor, and it is what the door uses to decide when to open
+and close. Turning this option on publishes that reading to HomeKit as a light sensor.
+
+Two things to know before you do:
+
+- **The number is not lux.** HomeKit measures light in lux, but Omlet reports its own
+  0-100 scale. The plugin publishes that scale as-is rather than inventing a
+  conversion, so a reading of 60 means "60 on Omlet's scale", not 60 lux.
+- **It sits at 100 for most of the day.** The reading climbs through dawn, reaches 100
+  by mid-morning and stays there until late afternoon, then falls through dusk. It is
+  useful for noticing the light change, and not useful as a brightness measurement.
+
+If what you want is "do something when it gets dark", the reading around dawn and dusk
+is the part worth automating on.
 
 ### Where credentials are kept
 

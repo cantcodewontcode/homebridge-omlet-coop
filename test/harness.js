@@ -301,7 +301,8 @@ const hap = {
     AccessoryInformation: serviceClass('AccessoryInformation'),
     GarageDoorOpener: serviceClass('GarageDoorOpener'),
     Lightbulb: serviceClass('Lightbulb'),
-    Battery: serviceClass('Battery')
+    Battery: serviceClass('Battery'),
+    LightSensor: serviceClass('LightSensor')
   },
   Characteristic: {
     Name: characteristicClass('Name'),
@@ -316,7 +317,8 @@ const hap = {
     On: characteristicClass('On'),
     BatteryLevel: characteristicClass('BatteryLevel'),
     StatusLowBattery: characteristicClass('StatusLowBattery'),
-    ChargingState: characteristicClass('ChargingState', { NOT_CHARGEABLE: 2 })
+    ChargingState: characteristicClass('ChargingState', { NOT_CHARGEABLE: 2 }),
+    CurrentAmbientLightLevel: characteristicClass('CurrentAmbientLightLevel')
   },
   HAPStatus: { SERVICE_COMMUNICATION_FAILURE: -70402 },
   HapStatusError: class HapStatusError extends Error {
