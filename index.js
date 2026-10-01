@@ -1098,7 +1098,6 @@ class OmletCoopPlatform {
     // the UUID becomes historical, which costs nothing.
     if (!accessory && this.accessories.length > 0) {
       accessory = this.accessories[0];
-      this.log.info('Device ID changed; keeping the existing HomeKit accessory and pointing it at the new device');
     }
     
     // Only genuine duplicates get removed - never the one in use.
@@ -1111,12 +1110,29 @@ class OmletCoopPlatform {
     }
     
     if (accessory) {
+      // An adopted accessory keeps its original UUID forever, so comparing that to
+      // the freshly generated one reports a change on every startup. Compare against
+      // the device ID we recorded instead, and record it now - an accessory from
+      // before this was stored adopts silently rather than announcing a change that
+      // never happened.
+      const known = accessory.context.deviceId;
+      
+      if (known !== this.deviceId) {
+        if (known) {
+          this.log.info('Device ID changed; keeping the existing HomeKit accessory and pointing it at the new device');
+        }
+        
+        accessory.context.deviceId = this.deviceId;
+        this.api.updatePlatformAccessories([accessory]);
+      }
+      
       new OmletCoopAccessory(this, accessory);
       return;
     }
     
     this.log.info('Adding new accessory: Omlet Coop');
     const coopAccessory = new this.api.platformAccessory('Omlet Coop', uuid);
+    coopAccessory.context.deviceId = this.deviceId;
     new OmletCoopAccessory(this, coopAccessory);
     this.api.registerPlatformAccessories('homebridge-omlet', 'OmletCoop', [coopAccessory]);
   }
