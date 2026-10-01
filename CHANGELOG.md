@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.9.9] - 2026-09-28
+## [0.9.9] - 2026-10-01
 
 ### Setup
 - Setup adds support for the official Omlet developer API keys. This is the only officially-supported sign-in method from Omlet, and keys can be managed and revoked on their portal.
@@ -35,6 +35,8 @@
 - Login requests send the correct Content-Length for non-ASCII passwords.
 - Clearer and more consistent wording on setup, migration, and door and light log messages.
 - A request that times out is no longer reported twice.
+- After a coop is replaced or factory reset, the "device ID changed" notice is logged once rather than on every restart.
+- A replacement coop is only adopted automatically when there is exactly one other door on the account. With more than one the plugin asks you to choose in settings instead of guessing, so an existing accessory can never end up controlling a different door.
 
 ## [0.9.7] - 2026-02-18
 - Fixed config schema: moved required fields to object-level array per JSON Schema spec
