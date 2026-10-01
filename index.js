@@ -850,6 +850,7 @@ class OmletCoopPlatform {
                   group.devices.forEach(device => {
                     devices.push({
                       deviceId: device.deviceId,
+                      serial: device.deviceSerial || null,
                       name: device.name || 'Omlet Device',
                       type: device.deviceType || 'unknown'
                     });
@@ -1748,7 +1749,9 @@ class OmletCoopAccessory {
                 this.log.error(`[${context}] HTTP Error`, res.statusCode, data || '');
               }
             } else if (res.statusCode === 404) {
-              this.log.error(`[${context}] HTTP Error`, res.statusCode, data || '');
+              if (this.debug) {
+                this.log.error(`[${context}] HTTP Error`, res.statusCode, data || '');
+              }
             } else {
               this.platform.noteFailure('server', context, `HTTP ${res.statusCode} ${data || ''}`.trim());
             }
@@ -1918,27 +1921,69 @@ class OmletCoopAccessory {
     this.platform.rediscovering = true;
     
     try {
-      this.log.warn(`[Device] Saved device ID ${this.deviceId} no longer exists on this account, rediscovering`);
+      // An unresolvable device will not fix itself without the user doing something,
+      // so explain it once rather than every 30 seconds for ever. A changed situation
+      // - different candidates, or a different reason - speaks up again.
+      // A set, not a single slot: two different messages fire per attempt, and one
+      // remembered signature would let each reset the other and both repeat for ever.
+      this.unresolvedSaid = this.unresolvedSaid || new Set();
+      
+      const sayOnce = (level, message, signature) => {
+        if (this.unresolvedSaid.has(signature)) {
+          return;
+        }
+        this.unresolvedSaid.add(signature);
+        this.log[level](message);
+      };
+      
+      sayOnce('warn', `[Device] Saved device ID ${this.deviceId} no longer exists on this account, rediscovering`, 'searching:' + this.deviceId);
       
       const devices = await this.platform.discoverAllDevices();
       
-      // Only adopt when exactly one door could be the replacement. With two, the
-      // right answer exists but cannot be identified, and guessing would silently
-      // point this accessory - with the user's room, name and automations - at the
-      // wrong physical door. Filter to doors first, or a feeder on the same account
-      // would make an otherwise obvious single-door case look ambiguous.
+      // Filter to doors first, or a feeder on the same account would make an
+      // otherwise obvious single-door case look ambiguous.
       const candidates = devices.filter(device => device.deviceId
         && device.deviceId !== this.deviceId
         && device.type === 'Autodoor');
       
+      // The hardware serial survives a factory reset; the device ID does not. When we
+      // recorded one, it identifies the same physical door exactly - however many are
+      // on the account - and nothing else needs to be guessed at.
+      const knownSerial = this.accessory.context.deviceSerial;
+      
+      if (knownSerial) {
+        const sameHardware = candidates.filter(device => device.serial === knownSerial);
+        
+        if (sameHardware.length === 1) {
+          const match = sameHardware[0];
+          this.deviceId = match.deviceId;
+          this.platform.deviceId = match.deviceId;
+          await this.platform.saveStoredCredentials();
+          this.accessoryInfoUpdated = false;
+          this.unresolvedSaid.clear();
+          this.log.info(`[Device] Device ID changed but the hardware serial matches; now using "${match.name}" (${match.deviceId})`);
+          return true;
+        }
+        
+        sayOnce('error', '[Device] This coop is no longer on the account, and no device on it has the same hardware serial. Open the Omlet Coop plugin settings and choose a Device ID.', 'noserial:' + knownSerial);
+        return false;
+      }
+      
+      // No serial recorded - an accessory created before we started storing one.
+      // Fall back to adopting only an unambiguous single candidate.
       if (candidates.length === 0) {
-        this.log.error('[Device] No coop door found on this account. Check the Omlet app, then restart Homebridge.');
+        sayOnce('error', '[Device] No coop door found on this account. Check the Omlet app, then restart Homebridge.', 'empty');
         return false;
       }
       
       if (candidates.length > 1) {
-        this.log.error('[Device] More than one coop door on this account, so it is unclear which replaced the old one. Open the Omlet Coop plugin settings and choose a Device ID.');
-        candidates.forEach(device => this.log.error(`[Device]   ${device.name} (${device.deviceId})`));
+        const signature = 'ambiguous:' + candidates.map(d => d.deviceId).sort().join(',');
+        
+        if (!this.unresolvedSaid.has(signature)) {
+          this.unresolvedSaid.add(signature);
+          this.log.error('[Device] More than one coop door on this account, so it is unclear which replaced the old one. Open the Omlet Coop plugin settings and choose a Device ID.');
+          candidates.forEach(device => this.log.error(`[Device]   ${device.name} (${device.deviceId})`));
+        }
         return false;
       }
       
@@ -1948,6 +1993,7 @@ class OmletCoopAccessory {
       this.platform.deviceId = match.deviceId;
       await this.platform.saveStoredCredentials();
       this.accessoryInfoUpdated = false;
+      this.unresolvedSaid.clear();
       this.log.info(`[Device] Now using "${match.name}" (${match.deviceId})`);
       
       return true;
@@ -1977,6 +2023,15 @@ class OmletCoopAccessory {
     // update serial and firmware from the first real response
     if (!this.accessoryInfoUpdated) {
       const deviceSerial = status.deviceSerial || this.deviceId;
+      
+      // deviceSerial is the device's wifi MAC address - confirmed against DHCP leases -
+      // so it is burned into the hardware and survives a factory reset. deviceId is a
+      // cloud registration that is reissued by one. Recording the serial is what lets
+      // a reset coop be identified later as the same physical door.
+      if (status.deviceSerial && this.accessory.context.deviceSerial !== status.deviceSerial) {
+        this.accessory.context.deviceSerial = status.deviceSerial;
+        this.platform.api.updatePlatformAccessories([this.accessory]);
+      }
       const firmware = status.state?.general?.firmwareVersionCurrent || '0.0.0';
       this.accessory.getService(hap.Service.AccessoryInformation)
         .setCharacteristic(hap.Characteristic.SerialNumber, deviceSerial)
