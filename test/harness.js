@@ -441,6 +441,9 @@ function setup(options = {}) {
     // turn once for a freshly started platform to have talked to the cloud at all.
     start: async () => { await api.fire('didFinishLaunching'); await clock.advance(0); },
     accessory: () => api.registered[0] || platform.accessories[0],
+    accessories: () => (api.registered.length ? api.registered : platform.accessories),
+    // Requests the plugin actually made, for asserting a command reached the right door.
+    sentTo: (deviceId) => cloud.requests.filter(r => (r.path || '').includes(deviceId)),
     restore: () => {
       global.setTimeout = realTimers.setTimeout;
       global.clearTimeout = realTimers.clearTimeout;
