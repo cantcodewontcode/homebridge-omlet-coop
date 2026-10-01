@@ -91,3 +91,6 @@ build/
 *.md
 !README.md
 !CHANGELOG.md
+
+# npm auth token - never commit
+.npmrc
