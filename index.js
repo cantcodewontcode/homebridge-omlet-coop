@@ -1921,12 +1921,28 @@ class OmletCoopAccessory {
       this.log.warn(`[Device] Saved device ID ${this.deviceId} no longer exists on this account, rediscovering`);
       
       const devices = await this.platform.discoverAllDevices();
-      const match = devices.find(device => device.deviceId && device.deviceId !== this.deviceId);
       
-      if (!match) {
+      // Only adopt when exactly one door could be the replacement. With two, the
+      // right answer exists but cannot be identified, and guessing would silently
+      // point this accessory - with the user's room, name and automations - at the
+      // wrong physical door. Filter to doors first, or a feeder on the same account
+      // would make an otherwise obvious single-door case look ambiguous.
+      const candidates = devices.filter(device => device.deviceId
+        && device.deviceId !== this.deviceId
+        && device.type === 'Autodoor');
+      
+      if (candidates.length === 0) {
         this.log.error('[Device] No coop door found on this account. Check the Omlet app, then restart Homebridge.');
         return false;
       }
+      
+      if (candidates.length > 1) {
+        this.log.error('[Device] More than one coop door on this account, so it is unclear which replaced the old one. Open the Omlet Coop plugin settings and choose a Device ID.');
+        candidates.forEach(device => this.log.error(`[Device]   ${device.name} (${device.deviceId})`));
+        return false;
+      }
+      
+      const match = candidates[0];
       
       this.deviceId = match.deviceId;
       this.platform.deviceId = match.deviceId;
