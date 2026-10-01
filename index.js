@@ -1230,7 +1230,7 @@ class OmletCoopAccessory {
     return this.cachedStatus?.state?.door?.fault === DOOR_FAULT_BLOCKED;
   }
   
-  // Faults we do not recognise are surfaced once each, rather than silently ignored
+  // Faults we do not recognize are surfaced once each, rather than silently ignored
   // or wrongly reported as an obstruction.
   noteDoorFault(fault) {
     if (!fault || fault === DOOR_FAULT_NONE) {
@@ -1249,7 +1249,7 @@ class OmletCoopAccessory {
       return;
     }
     
-    this.log.warn(`[Door] Door reported an unrecognised fault: "${fault}". Please report this at https://github.com/cantcodewontcode/homebridge-omlet-coop/issues`);
+    this.log.warn(`[Door] Door reported an unrecognized fault: "${fault}". Please report this at https://github.com/cantcodewontcode/homebridge-omlet-coop/issues`);
   }
   
   // One line per failure while something is clearly wrong, then silence until it
@@ -1481,7 +1481,7 @@ class OmletCoopAccessory {
     this.doorService.addLinkedService(service);
     this.lightSensorService = service;
     
-    this.log.info('Light level sensor enabled. It reports Omlet\'s own 0-100 scale, not lux.');
+    this.log.info('Light level sensor enabled');
   }
   
   async getAmbientLight() {

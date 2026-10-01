@@ -38,7 +38,7 @@ test('a value of false is still off', async () => {
   w.restore();
 });
 
-test('opting in publishes the reading, and says what the number means', async () => {
+test('opting in publishes the reading', async () => {
   const w = world({ enableLightSensor: true }, 66);
 
   await w.start();
@@ -48,7 +48,7 @@ test('opting in publishes the reading, and says what the number means', async ()
   assert.ok(service, 'sensor published');
   assert.equal(service.value(hap.Characteristic.CurrentAmbientLightLevel), 66,
     'the raw 0-100 reading, not a conversion');
-  assert.ok(w.said('not lux').length, 'the log says plainly what the scale is');
+  assert.ok(w.saidOnce('Light level sensor enabled'), 'logged once, not every poll');
   w.restore();
 });
 

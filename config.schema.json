@@ -136,7 +136,7 @@
         "title": "Light Level Sensor",
         "type": "boolean",
         "default": false,
-        "description": "Off by default. Publishes the coop's light reading as a HomeKit light sensor. HomeKit measures light in lux, but Omlet reports its own 0-100 scale, so the number shown is that scale and not a real lux value. It also sits at 100 for most of the day, changing only around dawn and dusk - useful for watching the light come and go, not for measuring brightness."
+        "description": "Omlet light sensor reports values of 0-100. Apple Home will (incorrectly) label this as a lux reading, but it is still useful for triggering light-level automations."
       }
     }
   },

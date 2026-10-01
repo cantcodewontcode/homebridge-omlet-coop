@@ -1,5 +1,5 @@
 // The failure back-off. Verified on hardware over 44 hours (auth) and 82 hours
-// (transport) before 0.9.9 shipped; these pin that behaviour so it survives the
+// (transport) before 0.9.9 shipped; these pin that behavior so it survives the
 // multi-door work.
 
 const { test } = require('node:test');

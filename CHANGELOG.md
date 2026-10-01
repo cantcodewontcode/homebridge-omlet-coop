@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Accessories
+- Now supports Light Level Sensor, off by default. Omlet light reports values of 0-100. Apple Home will (incorrectly) label this as a lux reading, but it is still useful for triggering light-level automations.
+
+### Reliability
+- Coop accessories are now tracked by hardware serials, allowing for better accessory persistence, even when a factory reset is performed.
+
+### Bug Fixes
+- A coop that cannot be found on the account is now reported once rather than on every poll.
+
 ## [0.9.9] - 2026-10-01
 
 ### Setup

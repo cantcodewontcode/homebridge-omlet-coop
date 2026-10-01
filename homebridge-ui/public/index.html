@@ -259,6 +259,15 @@
       
       <div class="form-group">
         <label>
+          <input type="checkbox" id="enableLightSensor"> Show coop light level as a sensor
+        </label>
+        <small class="form-text text-muted">
+          Omlet light sensor reports values of 0-100. Apple Home will (incorrectly) label this as a lux reading, but it is still useful for triggering light-level automations.
+        </small>
+      </div>
+      
+      <div class="form-group">
+        <label>
           <input type="checkbox" id="debugMode"> Enable Debug logging mode
         </label>
       </div>
@@ -381,6 +390,7 @@ function togglePasswordVisibility() {
   if (currentConfig.debug) {
     document.getElementById('debugMode').checked = currentConfig.debug;
   }
+  document.getElementById('enableLightSensor').checked = (currentConfig.enableLightSensor === true);
   // Older configs hold booleans; those are explicit overrides, not "auto".
   const toTriState = (value) => {
     if (value === undefined || value === null || value === '' || value === 'auto') {
@@ -404,6 +414,7 @@ function togglePasswordVisibility() {
       deviceId: document.getElementById('manualDeviceId').value.trim() || undefined,
       enableLight: document.getElementById('enableLight').value,
       enableBattery: document.getElementById('enableBattery').value,
+      enableLightSensor: document.getElementById('enableLightSensor').checked,
       debug: document.getElementById('debugMode').checked
     };
     
@@ -439,6 +450,7 @@ function togglePasswordVisibility() {
   document.getElementById('pollInterval').addEventListener('change', updateConfigFromForm);
   document.getElementById('enableLight').addEventListener('change', updateConfigFromForm);
   document.getElementById('enableBattery').addEventListener('change', updateConfigFromForm);
+  document.getElementById('enableLightSensor').addEventListener('change', updateConfigFromForm);
   document.getElementById('debugMode').addEventListener('change', updateConfigFromForm);
   
   // Blank or out of range is never written through - it always becomes a usable
@@ -836,6 +848,7 @@ function togglePasswordVisibility() {
     const apiServer = document.getElementById('apiServer').value.trim() || 'x107.omlet.co.uk';
     const pollInterval = parseInt(document.getElementById('pollInterval').value) || 30;
     const debugMode = document.getElementById('debugMode').checked;
+    const lightSensorMode = document.getElementById('enableLightSensor').checked;
     const enableLight = document.getElementById('enableLight').value;
     const enableBattery = document.getElementById('enableBattery').value;
     
@@ -865,6 +878,7 @@ function togglePasswordVisibility() {
         const keyResult = await homebridge.request('/validate', {
           token: devKey,
           deviceId: manualDeviceId || null,
+          enableLightSensor: lightSensorMode,
           debug: debugMode
         });
         
@@ -883,6 +897,7 @@ function togglePasswordVisibility() {
           countryCode: countryCode,
           enableLight: enableLight,
           enableBattery: enableBattery,
+          enableLightSensor: lightSensorMode,
           debug: debugMode
         };
         
@@ -958,6 +973,7 @@ function togglePasswordVisibility() {
         const validateResult = await homebridge.request('/validate', {
           token: manualToken,
           deviceId: hasDeviceId ? manualDeviceId : null,
+          enableLightSensor: lightSensorMode,
           debug: debugMode
         });
         
@@ -1000,6 +1016,7 @@ function togglePasswordVisibility() {
             email: email,
             password: password,
             countryCode: countryCode,
+            enableLightSensor: lightSensorMode,
             debug: debugMode
           });
           
@@ -1013,6 +1030,7 @@ function togglePasswordVisibility() {
           const validateResult2 = await homebridge.request('/validate', {
             token: finalToken,
             deviceId: hasDeviceId ? manualDeviceId : null,
+            enableLightSensor: lightSensorMode,
             debug: debugMode
           });
           
@@ -1054,6 +1072,7 @@ function togglePasswordVisibility() {
         const validateResult = await homebridge.request('/validate', {
           token: manualToken,
           deviceId: hasDeviceId ? manualDeviceId : null,
+          enableLightSensor: lightSensorMode,
           debug: debugMode
         });
         
@@ -1151,6 +1170,7 @@ function togglePasswordVisibility() {
         countryCode: countryCode,
         enableLight: enableLight,
         enableBattery: enableBattery,
+        enableLightSensor: lightSensorMode,
         debug: debugMode
       };
       
