@@ -225,6 +225,11 @@ class OmletCoopPlatform {
     
     this.accessories = [];
     
+    // Running accessory handlers, keyed by deviceId. Until now a handler was
+    // constructed and dropped, kept alive only by its own poll timer - so there was
+    // no way to stop one. Nothing can be torn down without this.
+    this.handlers = new Map();
+    
     this.log.info('Omlet Coop platform loaded');
     if (this.debug) {
       this.log.info('Debug mode enabled');
@@ -1139,15 +1144,43 @@ class OmletCoopPlatform {
         this.api.updatePlatformAccessories([accessory]);
       }
       
-      new OmletCoopAccessory(this, accessory);
+      this.handlers.set(this.deviceId, new OmletCoopAccessory(this, accessory));
       return;
     }
     
     this.log.info('Adding new accessory: Omlet Coop');
     const coopAccessory = new this.api.platformAccessory('Omlet Coop', uuid);
     coopAccessory.context.deviceId = this.deviceId;
-    new OmletCoopAccessory(this, coopAccessory);
+    this.handlers.set(this.deviceId, new OmletCoopAccessory(this, coopAccessory));
     this.api.registerPlatformAccessories('homebridge-omlet', 'OmletCoop', [coopAccessory]);
+    
+    // configureAccessory only runs for accessories restored from cache, so without
+    // this the platform does not know about one it just created until the next
+    // restart - and cannot remove it.
+    this.accessories.push(coopAccessory);
+  }
+  
+  // Stop a handler and take its accessory out of HomeKit. Separate from deciding
+  // *when* to do that - this is the mechanism, the policy lives with discovery.
+  removeHandler(deviceId, reason) {
+    const handler = this.handlers.get(deviceId);
+    
+    if (handler) {
+      handler.destroy();
+      this.handlers.delete(deviceId);
+    }
+    
+    const accessory = this.accessories.find(item => item.context.deviceId === deviceId);
+    
+    if (!accessory) {
+      return false;
+    }
+    
+    this.log.info(`Removing "${accessory.displayName}" from HomeKit${reason ? ': ' + reason : ''}`);
+    this.api.unregisterPlatformAccessories('homebridge-omlet', 'OmletCoop', [accessory]);
+    this.accessories = this.accessories.filter(item => item !== accessory);
+    
+    return true;
   }
   
   configureAccessory(accessory) {
@@ -1181,6 +1214,7 @@ class OmletCoopAccessory {
     this.pendingServiceChange = { light: null, battery: null, lightSensor: null };
     this.firstReconcileDone = false;
     this.lastFault = null;
+    this.destroyed = false;
     this.recoveryAttempted = { door: false, light: false };
     this.intents = { door: null, light: null };
     this.reapply = { door: null, light: null };
@@ -2248,6 +2282,14 @@ class OmletCoopAccessory {
     }
   }
 
+  // Bumping the generation is what stops a poll that is already in flight from
+  // scheduling a successor once it finishes - clearing the timer alone would not.
+  destroy() {
+    this.destroyed = true;
+    this.pollGeneration++;
+    this.stopPolling();
+  }
+
   isTransitioning() {
     const doorState = this.cachedStatus?.state?.door?.state;
     const lightState = this.cachedStatus?.state?.light?.state;
@@ -2265,6 +2307,10 @@ class OmletCoopAccessory {
   // poll is already in flight, that poll finds its generation stale and declines to
   // schedule a successor, so exactly one chain survives.
   scheduleNextPoll(delayMs) {
+    if (this.destroyed) {
+      return;
+    }
+    
     this.pollGeneration++;
     
     if (this.pollTimer) {
@@ -2285,8 +2331,9 @@ class OmletCoopAccessory {
       }
     }
     
-    // Superseded while we were in flight - the newer timer owns the chain now.
-    if (generation !== this.pollGeneration) {
+    // Superseded while we were in flight - the newer timer owns the chain now. A
+    // destroyed handler is superseded by nothing, and must not schedule again.
+    if (this.destroyed || generation !== this.pollGeneration) {
       return;
     }
     
