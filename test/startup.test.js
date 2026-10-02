@@ -19,7 +19,7 @@ test('starts from a stored token and polls', async () => {
   await w.start();
 
   assert.ok(w.said('Using saved API key').length, 'should use the stored key');
-  assert.ok(w.said('polling every 30s').length, 'should start polling');
+  assert.ok(w.said('Polling every 30s').length, 'should start polling');
   assert.equal(w.api.registered.length, 1, 'one accessory registered');
   w.restore();
 });

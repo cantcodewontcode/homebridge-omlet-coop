@@ -440,10 +440,15 @@ function setup(options = {}) {
     // startPolling() schedules the first poll on a 0ms timer, so the clock has to
     // turn once for a freshly started platform to have talked to the cloud at all.
     start: async () => { await api.fire('didFinishLaunching'); await clock.advance(0); },
-    accessory: () => api.registered[0] || platform.accessories[0],
-    accessories: () => (api.registered.length ? api.registered : platform.accessories),
-    // Requests the plugin actually made, for asserting a command reached the right door.
-    sentTo: (deviceId) => cloud.requests.filter(r => (r.path || '').includes(deviceId)),
+    // platform.accessories is the live list - api.registered is an append-only log of
+    // registrations and never shrinks, so it counts accessories that have been removed.
+    accessory: () => platform.accessories[0] || api.registered[0],
+    accessories: () => platform.accessories,
+    // One /group call serves every device, so "did we poll" is account-wide.
+    polls: () => cloud.requests.filter(r => (r.path || '') === '/api/v1/group').length,
+    // Commands still go to the device endpoint, so this is how you assert one
+    // reached the right door.
+    sentTo: (deviceId) => cloud.requests.filter(r => (r.path || '').includes('/device/' + deviceId)),
     restore: () => {
       global.setTimeout = realTimers.setTimeout;
       global.clearTimeout = realTimers.clearTimeout;

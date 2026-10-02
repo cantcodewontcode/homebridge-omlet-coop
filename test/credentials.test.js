@@ -100,7 +100,7 @@ test('a config key takes precedence, but a working stored one rescues a bad conf
 
   assert.ok(w.said('falling back to the saved credential').length,
     'a typo in config must not jam a working stored credential');
-  assert.ok(w.said('polling every 30s').length);
+  assert.ok(w.said('Polling every 30s').length);
   w.restore();
 });
 

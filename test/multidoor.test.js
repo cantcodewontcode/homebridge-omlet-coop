@@ -26,8 +26,9 @@ function feeder(deviceId, name) {
   return device;
 }
 
-function account(devices, stored = {}) {
+function account(devices, stored = {}, config = {}) {
   const w = setup({
+    config,
     files: { [TOKENS]: JSON.stringify(Object.assign({ bearerToken: 'goodtoken' }, stored)) }
   });
   devices.forEach(d => w.cloud.addDevice(d));
@@ -48,14 +49,16 @@ test('two doors on one account become two accessories', async () => {
   w.restore();
 });
 
-test('each door keeps its own poll cycle, staggered', async () => {
-  const w = account([door('dev1'), door('dev2')], { deviceId: 'dev1' });
+test('one account-wide poll feeds every door', async () => {
+  const w = account([door('dev1', 'Front'), door('dev2', 'Back')], { deviceId: 'dev1' });
 
   await w.start();
   await w.clock.advance(MINUTE);
 
-  assert.ok(w.sentTo('dev1').length, 'dev1 polled');
-  assert.ok(w.sentTo('dev2').length, 'dev2 polled');
+  assert.ok(w.platform.handlers.get('dev1').cachedStatus, 'dev1 has status');
+  assert.ok(w.platform.handlers.get('dev2').cachedStatus, 'dev2 has status');
+  assert.equal(w.cloud.requests.filter(r => r.path.includes('/device/')).length, 0,
+    'no per-device polling - /api/v1/group returns them all');
   w.restore();
 });
 
@@ -110,31 +113,51 @@ test('a command reaches the door it was sent to', async () => {
 
 // ---------- phase 2: lifecycle
 
-test('a door removed from the account loses its accessory', { todo: 'phase 2' }, async () => {
-  const w = account([door('dev1'), door('dev2')], { deviceId: 'dev1' });
+test('a door removed from the account loses its accessory', async () => {
+  const w = account([door('dev1'), door('dev2')], { deviceId: 'dev1' }, { removeAfterHours: 1 });
 
   await w.start();
   await w.clock.advance(MINUTE);
   w.cloud.devices.delete('dev2');
-  await w.clock.advance(70 * MINUTE);
 
-  assert.equal(w.api.unregistered.length, 1, 'the departed door is unregistered');
+  // The first poll after it vanishes starts the clock; it is not removed yet.
+  await w.clock.advance(50 * MINUTE);
+  assert.equal(w.api.unregistered.length, 0, 'given a grace period, not removed at once');
+  assert.ok(w.said('is no longer on your account').length, 'and says so');
+
+  await w.clock.advance(20 * MINUTE);
+  assert.equal(w.api.unregistered.length, 1, 'removed once the window passes');
   assert.equal(w.accessories().length, 1);
   w.restore();
 });
 
-test('a torn-down door stops polling', { todo: 'phase 2' }, async () => {
-  const w = account([door('dev1'), door('dev2')], { deviceId: 'dev1' });
+test('a door that comes back is not removed', async () => {
+  const w = account([door('dev1'), door('dev2')], { deviceId: 'dev1' }, { removeAfterHours: 1 });
+
+  await w.start();
+  await w.clock.advance(MINUTE);
+  const gone = w.cloud.devices.get('dev2');
+  w.cloud.devices.delete('dev2');
+  await w.clock.advance(30 * MINUTE);
+
+  w.cloud.addDevice(gone);
+  await w.clock.advance(130 * MINUTE);
+
+  assert.equal(w.api.unregistered.length, 0, 'the clock resets when it reappears');
+  assert.equal(w.accessories().length, 2);
+  w.restore();
+});
+
+test('a torn-down door stops polling', async () => {
+  const w = account([door('dev1'), door('dev2')], { deviceId: 'dev1' }, { removeAfterHours: 1 });
 
   await w.start();
   await w.clock.advance(MINUTE);
   w.cloud.devices.delete('dev2');
-  await w.clock.advance(70 * MINUTE);
+  await w.clock.advance(130 * MINUTE);
 
-  const before = w.sentTo('dev2').length;
-  await w.clock.advance(10 * MINUTE);
-  assert.equal(w.sentTo('dev2').length, before,
-    'no orphaned timer still polling a device that is gone');
+  assert.equal(w.platform.handlers.get('dev2'), undefined, 'handler gone');
+  assert.equal(w.platform.accessories.length, 1, 'and its accessory with it');
   w.restore();
 });
 
@@ -145,8 +168,15 @@ test('restart restores accessories from cache without duplicating them', async (
   await w.clock.advance(MINUTE);
   const uuids = w.accessories().map(a => a.UUID).sort();
 
-  w.platform.accessories.forEach(a => w.platform.configureAccessory(a));
-  await w.start();
+  // A real restart: nothing in memory, then Homebridge hands back the cached
+  // accessories one at a time, then discovery runs.
+  const cached = w.platform.accessories.slice();
+  w.platform.handlers.forEach(handler => handler.destroy());
+  w.platform.handlers.clear();
+  w.platform.accessories = [];
+  cached.forEach(a => w.platform.configureAccessory(a));
+
+  await w.platform.discoverDevices();
   await w.clock.advance(MINUTE);
 
   assert.deepEqual(w.accessories().map(a => a.UUID).sort(), uuids, 'same accessories, no extras');
@@ -155,7 +185,7 @@ test('restart restores accessories from cache without duplicating them', async (
 
 // ---------- phase 5: replacement
 
-test('one door reset: identified by serial, the other untouched', { todo: 'phase 5' }, async () => {
+test('one door reset: identified by serial, the other untouched', async () => {
   const a = door('dev1', 'Front'); a.deviceSerial = 'aaaaaaaaaaaa';
   const b = door('dev2', 'Back');  b.deviceSerial = 'bbbbbbbbbbbb';
   const w = account([a, b], { deviceId: 'dev1' });
@@ -190,8 +220,15 @@ test('two doors swapped at once: no guessing', async () => {
   w.cloud.addDevice(x); w.cloud.addDevice(y);
   await w.clock.advance(5 * MINUTE);
 
-  const adopted = w.accessories().filter(z => ['dev8', 'dev9'].includes(z.context.deviceId));
-  assert.equal(adopted.length, 0, 'neither accessory adopts unknown hardware');
+  // New hardware does get accessories - that is correct. What must not happen is the
+  // existing two being silently repointed at doors they have never met.
+  const bySerial = {};
+  w.accessories().forEach(z => { bySerial[z.context.deviceSerial] = z.context.deviceId; });
+
+  assert.equal(bySerial['aaaaaaaaaaaa'], 'dev1', 'the original front door is untouched');
+  assert.equal(bySerial['bbbbbbbbbbbb'], 'dev2', 'and so is the back one');
+  assert.equal(bySerial['cccccccccccc'], 'dev8', 'the new hardware is its own accessory');
+  assert.equal(bySerial['dddddddddddd'], 'dev9');
   w.restore();
 });
 

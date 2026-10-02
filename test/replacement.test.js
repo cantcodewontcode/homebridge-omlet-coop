@@ -1,9 +1,11 @@
-// What happens when the stored deviceId stops resolving - a coop factory reset,
-// replaced, or removed from the account.
+// What happens when a door's registration changes or it leaves the account.
 //
-// deviceSerial is the wifi MAC (confirmed against DHCP reservations that survived a
-// real reset), so it identifies the same physical door exactly. deviceId does not:
-// a reset reissues it.
+// Since polling moved to /api/v1/group, identity is settled during discovery rather
+// than by a 404 on a per-device poll: a door that is gone is simply absent from the
+// list, and a reset one reappears under a new device ID with the same serial.
+//
+// deviceSerial is the wifi MAC - confirmed against a DHCP reservation that survived a
+// real reset - so it identifies the same physical door exactly.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -12,158 +14,111 @@ const { setup, door } = require('./harness');
 const TOKENS = '/storage/omlet-coop-tokens.json';
 const MINUTE = 60 * 1000;
 
-function withDevice(deviceId) {
-  return { files: { [TOKENS]: JSON.stringify({ bearerToken: 'goodtoken', deviceId }) } };
-}
-
-// Give the accessory a poll or two so the serial gets recorded, the way it would be
-// in the field before anything went wrong.
-async function running(serial = 'aa11bb22cc33') {
-  const w = setup(withDevice('dev1'));
-  const device = door('dev1', 'Teresa\'s autodoor');
-  device.deviceSerial = serial;
-  w.cloud.addDevice(device);
-
-  await w.start();
-  await w.clock.advance(MINUTE);
-
-  assert.equal(w.accessory().context.deviceSerial, serial, 'serial recorded on first poll');
+function world(devices, config = {}) {
+  const w = setup({
+    config,
+    files: { [TOKENS]: JSON.stringify({ bearerToken: 'goodtoken', deviceId: 'dev1' }) }
+  });
+  devices.forEach(d => w.cloud.addDevice(d));
   return w;
 }
 
-test('the serial is recorded and survives into the accessory context', async () => {
-  const w = await running();
+function withSerial(deviceId, name, serial) {
+  const d = door(deviceId, name);
+  d.deviceSerial = serial;
+  return d;
+}
+
+test('the serial is recorded on the accessory', async () => {
+  const w = world([withSerial('dev1', 'Front', 'aa11bb22cc33')]);
+
+  await w.start();
+  await w.clock.advance(MINUTE);
+
+  assert.equal(w.accessory().context.deviceSerial, 'aa11bb22cc33');
   assert.equal(w.accessory().context.deviceId, 'dev1');
-  assert.ok(w.api.updated.length, 'persisted, not just held in memory');
   w.restore();
 });
 
-test('a reset coop is identified by its serial, even with other doors present', async () => {
-  const w = await running('aa11bb22cc33');
-
-  // The reset: same hardware, new cloud registration. Two other doors on the account
-  // to prove the match is exact rather than a lucky count of one.
-  w.cloud.devices.delete('dev1');
-  const reborn = door('dev9', 'Teresa\'s autodoor');
-  reborn.deviceSerial = 'aa11bb22cc33';
-  w.cloud.addDevice(reborn);
-  w.cloud.addDevice(Object.assign(door('dev2', 'Other door'), { deviceSerial: 'ff00ff00ff00' }));
-  w.cloud.addDevice(Object.assign(door('dev3', 'Third door'), { deviceSerial: 'ee00ee00ee00' }));
-
-  await w.clock.advance(2 * MINUTE);
-
-  assert.ok(w.said('hardware serial matches').length, 'adopted on the serial');
-  assert.equal(w.platform.deviceId, 'dev9', 'now polling the new registration');
-  assert.equal(w.api.registered.length, 1, 'same accessory - no new HomeKit tile');
-  w.restore();
-});
-
-test('different hardware is refused, however few candidates there are', async () => {
-  const w = await running('aa11bb22cc33');
-
-  // A genuine replacement: new unit, new MAC. Exactly one candidate, so the old
-  // count rule would have adopted it.
-  w.cloud.devices.delete('dev1');
-  w.cloud.addDevice(Object.assign(door('dev9', 'New door'), { deviceSerial: '998877665544' }));
-
-  await w.clock.advance(2 * MINUTE);
-
-  assert.equal(w.said('hardware serial matches').length, 0, 'must not adopt other hardware');
-  assert.ok(w.said('no device on it has the same hardware serial').length, 'and says why');
-  assert.notEqual(w.platform.deviceId, 'dev9');
-  w.restore();
-});
-
-test('without a recorded serial it falls back to the single-candidate rule', async () => {
-  // An accessory from before serials were recorded: the device never reports one.
-  const w = setup(withDevice('dev1'));
-  const device = door('dev1');
-  delete device.deviceSerial;
-  w.cloud.addDevice(device);
+test('a reset door is re-identified by serial on the next poll', async () => {
+  const w = world([withSerial('dev1', 'Front', 'aa11bb22cc33')]);
 
   await w.start();
   await w.clock.advance(MINUTE);
-  assert.equal(w.accessory().context.deviceSerial, undefined, 'nothing to record');
+  const uuid = w.accessory().UUID;
 
+  // The reset: same hardware, new registration.
   w.cloud.devices.delete('dev1');
-  const replacement = door('dev9', 'Replacement');
-  delete replacement.deviceSerial;
-  w.cloud.addDevice(replacement);
-
+  w.cloud.addDevice(withSerial('dev9', 'Front', 'aa11bb22cc33'));
   await w.clock.advance(2 * MINUTE);
 
-  assert.ok(w.said('Now using').length, 'one unambiguous candidate is still adopted');
-  assert.equal(w.platform.deviceId, 'dev9');
+  assert.equal(w.platform.accessories.length, 1, 'still one accessory');
+  assert.equal(w.accessory().UUID, uuid, 'the same one - rooms and automations survive');
+  assert.equal(w.accessory().context.deviceId, 'dev9', 'now pointed at the new registration');
+  assert.ok(w.platform.handlers.get('dev9'), 'and polled under the new id');
   w.restore();
 });
 
-test('without a serial AND with two candidates, it refuses rather than guesses', async () => {
-  const w = setup(withDevice('dev1'));
-  const device = door('dev1');
-  delete device.deviceSerial;
-  w.cloud.addDevice(device);
+test('replacement hardware gets its own accessory, never the old one', async () => {
+  const w = world([withSerial('dev1', 'Front', 'aa11bb22cc33')], { removeAfterHours: 0 });
 
   await w.start();
   await w.clock.advance(MINUTE);
 
+  // A genuinely new unit: new registration, new MAC.
   w.cloud.devices.delete('dev1');
-  ['dev8', 'dev9'].forEach((id) => {
-    const d = door(id, 'Door ' + id);
-    delete d.deviceSerial;
-    w.cloud.addDevice(d);
-  });
-
+  w.cloud.addDevice(withSerial('dev9', 'Replacement', '998877665544'));
   await w.clock.advance(2 * MINUTE);
 
-  assert.ok(w.said('More than one coop door').length, 'asks instead of picking');
-  assert.ok(['dev8', 'dev9'].indexOf(w.platform.deviceId) === -1, 'adopted neither');
+  const serials = w.platform.accessories.map(a => a.context.deviceSerial).sort();
+  assert.deepEqual(serials, ['998877665544', 'aa11bb22cc33'],
+    'the old accessory is not silently repointed at different hardware');
   w.restore();
 });
 
-test('an empty account is reported, and nothing is adopted', async () => {
-  const w = await running();
+test('a door that leaves the account is reported once, then removed', async () => {
+  const w = world([withSerial('dev1', 'Front', 'aa11bb22cc33'),
+                   withSerial('dev2', 'Back', 'bb22cc33dd44')], { removeAfterHours: 1 });
+
+  await w.start();
+  await w.clock.advance(MINUTE);
+  w.cloud.devices.delete('dev2');
+  w.logs.length = 0;
+
+  await w.clock.advance(50 * MINUTE);
+  assert.equal(w.said('is no longer on your account').length, 1,
+    'said once, not on every poll');
+  assert.equal(w.api.unregistered.length, 0, 'and not removed during the grace period');
+
+  await w.clock.advance(20 * MINUTE);
+  assert.equal(w.api.unregistered.length, 1, 'removed once the window passes');
+  assert.ok(w.said('from HomeKit: not seen for').length, 'and says why');
+  w.restore();
+});
+
+test('removal can be turned off entirely', async () => {
+  const w = world([withSerial('dev1', 'Front', 'aa11bb22cc33'),
+                   withSerial('dev2', 'Back', 'bb22cc33dd44')], { removeAfterHours: 0 });
+
+  await w.start();
+  await w.clock.advance(MINUTE);
+  w.cloud.devices.delete('dev2');
+  await w.clock.advance(48 * 60 * MINUTE);
+
+  assert.equal(w.api.unregistered.length, 0, 'kept indefinitely when the window is 0');
+  assert.equal(w.platform.accessories.length, 2);
+  w.restore();
+});
+
+test('an empty account never removes anything', async () => {
+  const w = world([withSerial('dev1', 'Front', 'aa11bb22cc33')], { removeAfterHours: 1 });
+
+  await w.start();
+  await w.clock.advance(MINUTE);
   w.cloud.devices.clear();
+  await w.clock.advance(5 * 60 * MINUTE);
 
-  await w.clock.advance(2 * MINUTE);
-
-  assert.ok(w.said('no longer on the account').length || w.said('no device on it has the same hardware serial').length,
-    'tells the user the coop is gone');
-  w.restore();
-});
-
-test('an unresolvable coop is explained once, not every poll', async () => {
-  const w = await running('aa11bb22cc33');
-
-  w.cloud.devices.delete('dev1');
-  w.cloud.addDevice(Object.assign(door('dev8', 'Door eight'), { deviceSerial: '111111111111' }));
-  w.cloud.addDevice(Object.assign(door('dev9', 'Door nine'), { deviceSerial: '222222222222' }));
-  w.logs.length = 0;
-
-  await w.clock.advance(10 * MINUTE);
-
-  const explained = w.said('no device on it has the same hardware serial').length;
-  assert.equal(explained, 1,
-    `explained ${explained} times over ten minutes of polling - it must say it once`);
-
-  const raw404 = w.said('HTTP Error 404').length;
-  assert.equal(raw404, 0, 'the raw 404 is reported in context, not repeated per poll');
-  w.restore();
-});
-
-test('a changed situation speaks up again', async () => {
-  const w = await running('aa11bb22cc33');
-
-  w.cloud.devices.delete('dev1');
-  w.logs.length = 0;
-  await w.clock.advance(3 * MINUTE);
-  assert.equal(w.said('no device on it has the same hardware serial').length, 1);
-
-  // The coop comes back under a new registration - same hardware.
-  const reborn = door('dev9', 'Teresa\'s autodoor');
-  reborn.deviceSerial = 'aa11bb22cc33';
-  w.cloud.addDevice(reborn);
-  await w.clock.advance(2 * MINUTE);
-
-  assert.ok(w.said('hardware serial matches').length, 'recovers once the hardware reappears');
+  assert.equal(w.api.unregistered.length, 0,
+    'an empty list is indistinguishable from an Omlet glitch, so it is never grounds for removal');
   w.restore();
 });
