@@ -398,6 +398,9 @@ class OmletPluginUiServer extends HomebridgePluginUiServer {
               if (devicesArray) {
                 const devices = devicesArray.map(device => ({
                   deviceId: device.deviceId,
+                  // The wifi MAC, and stable across a factory reset - so it is what
+                  // per-device settings are keyed on, and what the list shows.
+                  serial: device.deviceSerial || null,
                   name: device.name || 'Unknown Device',
                   type: device.deviceType || 'Unknown',
                   // Surfaced so the settings page can show what auto-detection sees

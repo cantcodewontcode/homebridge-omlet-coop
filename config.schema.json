@@ -70,10 +70,10 @@
         "description": "Your Omlet API key. Generate one in the developer console at smart.omlet.com/developers, or leave blank and log in with your email address and password to have one issued for you. Letters, digits, underscores and hyphens, no longer than 128 characters."
       },
       "deviceId": {
-        "title": "Device ID",
+        "title": "Device ID (no longer used)",
         "type": "string",
         "placeholder": "optional, will be auto-discovered",
-        "description": "Advanced. Not normally needed - your coop door is found automatically."
+        "description": "Left over from single-door versions. Every device on your account is published now, so this is only read to work out which door was already set up."
       },
       "pollInterval": {
         "title": "Poll Interval (seconds)",
@@ -137,6 +137,86 @@
         "type": "boolean",
         "default": false,
         "description": "Omlet light sensor reports values of 0-100. Apple Home will (incorrectly) label this as a lux reading, but it is still useful for triggering light-level automations."
+      },
+      "removeAfterHours": {
+        "title": "Remove Accessories Not Seen For (hours)",
+        "type": "integer",
+        "default": 24,
+        "minimum": 0,
+        "maximum": 720,
+        "description": "How long a device may be missing from your account before its accessory is removed from HomeKit. 0 never removes one. The clock only runs while the plugin is running and reaching Omlet."
+      },
+      "devices": {
+        "title": "Per-Device Settings",
+        "type": "array",
+        "description": "Settings for individual devices. Anything left unset uses the plugin-wide setting above.",
+        "items": {
+          "type": "object",
+          "properties": {
+            "serial": {
+              "title": "Device Serial",
+              "type": "string",
+              "description": "The device serial shown in the plugin settings. Survives a factory reset, so this is the preferred way to identify a device."
+            },
+            "deviceId": {
+              "title": "Device ID",
+              "type": "string",
+              "description": "Used only when no serial has been recorded yet."
+            },
+            "enabled": {
+              "title": "Enabled",
+              "type": "boolean",
+              "default": true,
+              "description": "Unticking this removes the device from HomeKit, along with its room, its name and any automations using it."
+            },
+            "enableLight": {
+              "title": "Coop Light Accessory",
+              "type": "string",
+              "oneOf": [
+                {
+                  "title": "Auto-discover",
+                  "enum": [
+                    "auto"
+                  ]
+                },
+                {
+                  "title": "Do not display",
+                  "enum": [
+                    "off"
+                  ]
+                }
+              ]
+            },
+            "enableBattery": {
+              "title": "Battery Status",
+              "type": "string",
+              "oneOf": [
+                {
+                  "title": "Automatic by power type",
+                  "enum": [
+                    "auto"
+                  ]
+                },
+                {
+                  "title": "Always show",
+                  "enum": [
+                    "on"
+                  ]
+                },
+                {
+                  "title": "Always hide",
+                  "enum": [
+                    "off"
+                  ]
+                }
+              ]
+            },
+            "enableLightSensor": {
+              "title": "Light Level Sensor",
+              "type": "boolean"
+            }
+          }
+        }
       }
     }
   },
@@ -153,11 +233,26 @@
       "expanded": false,
       "items": [
         "apiServer",
-        "deviceId",
         "pollInterval",
+        "removeAfterHours",
         "enableLight",
         "enableBattery",
         "debug"
+      ]
+    },
+    {
+      "key": "devices",
+      "type": "array",
+      "title": "Per-Device Settings",
+      "expandable": true,
+      "expanded": false,
+      "items": [
+        "devices[].serial",
+        "devices[].deviceId",
+        "devices[].enabled",
+        "devices[].enableLight",
+        "devices[].enableBattery",
+        "devices[].enableLightSensor"
       ]
     }
   ]

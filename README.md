@@ -8,6 +8,7 @@ This Homebridge plugin allows you to control your Omlet coop door and coop light
 
 - **Easy Setup**: Custom configuration interface with automatic login and device discovery
 - **Coop Door Control**: Open, close, and monitor your Omlet door (as a garage door) in HomeKit
+- **Multiple Doors**: Every coop door on your account, each with its own settings
 - **Light Control**: Turn your coop light on and off (optional, requires Omlet Coop Light module)
 - **Real-time Status**: Automatic polling to keep door and light status up to date
 - **HomeKit Integration**: Full integration with Apple HomeKit scenes and automations
@@ -64,7 +65,8 @@ Logging in generates an Omlet API key, which is saved to the Homebridge storage 
 Rarely needed:
 
 - **API Server**: Override the default API server hostname (if ever needed)
-- **Poll Interval**: Reduce how often the plugin checks device status (minimum: 30 seconds)
+- **Poll Interval**: Reduce how often the plugin checks device status (minimum: 30 seconds). One request covers every device on your account, so this does not change with the number of doors
+- **Remove accessories not seen for**: How long a device may be missing from your Omlet account before its accessory is removed from HomeKit. Default 24 hours; 0 never removes one
 - **Light Level Sensor**: Off by default. See below before turning it on
 - **Debug Mode**: Enable detailed logging for troubleshooting
 
@@ -117,12 +119,19 @@ Set `enableLight` to `false` if you do not have the Omlet Coop Light module inst
 
 ### Multiple Devices
 
-Your coop door is found automatically — there is nothing to configure.
+Your coop doors are found automatically — there is nothing to configure. Every door on
+your Omlet account is published to HomeKit, named as it is named in the Omlet app.
 
-If you have more than one door on your account, the plugin uses the first one it
-finds and lists the others in the Homebridge log at startup. If that is not the door
-you want, please [open an issue](https://github.com/cantcodewontcode/homebridge-omlet-coop/issues)
-and say so.
+Each door has its own section in the plugin settings, where you can set its coop light
+accessory, battery status and light level sensor, or switch the door off entirely.
+Anything you leave alone follows the plugin-wide setting above it.
+
+Disabling a door removes it from HomeKit. Its room, its name and any automations using
+it go with it, and turning it back on creates a new tile with none of them back.
+
+If you are upgrading from an earlier version and have more than one door, only the
+door that was already set up is published. The others are listed as disabled, and the
+Homebridge log says so at startup — enable the ones you want in the plugin settings.
 
 ## Usage
 
