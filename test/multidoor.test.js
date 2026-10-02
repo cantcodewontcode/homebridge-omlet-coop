@@ -36,7 +36,7 @@ function account(devices, stored = {}) {
 
 // ---------- phase 4: discovery
 
-test('two doors on one account become two accessories', { todo: 'phase 4' }, async () => {
+test('two doors on one account become two accessories', async () => {
   const w = account([door('dev1', 'Front coop'), door('dev2', 'Back coop')], { deviceId: 'dev1' });
 
   await w.start();
@@ -48,7 +48,7 @@ test('two doors on one account become two accessories', { todo: 'phase 4' }, asy
   w.restore();
 });
 
-test('each door keeps its own poll cycle, staggered', { todo: 'phase 4' }, async () => {
+test('each door keeps its own poll cycle, staggered', async () => {
   const w = account([door('dev1'), door('dev2')], { deviceId: 'dev1' });
 
   await w.start();
@@ -59,7 +59,7 @@ test('each door keeps its own poll cycle, staggered', { todo: 'phase 4' }, async
   w.restore();
 });
 
-test('a feeder on the account is not published as a garage door', { todo: 'phase 4' }, async () => {
+test('a feeder on the account is not published as a garage door', async () => {
   const w = account([door('dev1'), feeder('feed1', 'Feeder')], { deviceId: 'dev1' });
 
   await w.start();
@@ -70,7 +70,7 @@ test('a feeder on the account is not published as a garage door', { todo: 'phase
   w.restore();
 });
 
-test('a single-door user keeps their existing accessory and UUID', { todo: 'phase 4' }, async () => {
+test('a single-door user keeps their existing accessory and UUID', async () => {
   const w = account([door('dev1', 'Teresa\'s autodoor')], { deviceId: 'dev1' });
 
   await w.start();
@@ -89,7 +89,7 @@ test('a single-door user keeps their existing accessory and UUID', { todo: 'phas
 
 // ---------- phase 4: commands
 
-test('a command reaches the door it was sent to', { todo: 'phase 4' }, async () => {
+test('a command reaches the door it was sent to', async () => {
   const w = account([door('dev1', 'Front', { door: 'closed' }),
                      door('dev2', 'Back', { door: 'closed' })], { deviceId: 'dev1' });
 
@@ -138,7 +138,7 @@ test('a torn-down door stops polling', { todo: 'phase 2' }, async () => {
   w.restore();
 });
 
-test('restart restores accessories from cache without duplicating them', { todo: 'phase 2' }, async () => {
+test('restart restores accessories from cache without duplicating them', async () => {
   const w = account([door('dev1'), door('dev2')], { deviceId: 'dev1' });
 
   await w.start();
@@ -175,7 +175,7 @@ test('one door reset: identified by serial, the other untouched', { todo: 'phase
   w.restore();
 });
 
-test('two doors swapped at once: no guessing', { todo: 'phase 5' }, async () => {
+test('two doors swapped at once: no guessing', async () => {
   const a = door('dev1', 'Front'); a.deviceSerial = 'aaaaaaaaaaaa';
   const b = door('dev2', 'Back');  b.deviceSerial = 'bbbbbbbbbbbb';
   const w = account([a, b], { deviceId: 'dev1' });
@@ -195,7 +195,7 @@ test('two doors swapped at once: no guessing', { todo: 'phase 5' }, async () => 
   w.restore();
 });
 
-test('an old device ID returning is not treated as a new door', { todo: 'phase 5' }, async () => {
+test('an old device ID returning is not treated as a new door', async () => {
   const a = door('dev1', 'Front'); a.deviceSerial = 'aaaaaaaaaaaa';
   const w = account([a], { deviceId: 'dev1' });
 
@@ -247,5 +247,27 @@ test('a door added later appears without a restart', { todo: 'phase 7' }, async 
   await w.clock.advance(70 * MINUTE);
 
   assert.equal(w.accessories().length, 2, 'picked up by periodic rediscovery');
+  w.restore();
+});
+
+test('a serial mismatch is never overridden by a matching device ID', async () => {
+  const a = door('dev1', 'Front'); a.deviceSerial = 'aaaaaaaaaaaa';
+  const w = account([a], { deviceId: 'dev1' });
+
+  await w.start();
+  await w.clock.advance(MINUTE);
+  assert.equal(w.accessory().context.deviceSerial, 'aaaaaaaaaaaa');
+
+  // Same device ID, different hardware behind it. The UUID still matches, and must
+  // not be allowed to win: a MAC cannot be reissued, so this is a different door.
+  w.cloud.devices.get('dev1').deviceSerial = 'ffffffffffff';
+  w.platform.handlers.forEach(h => h.destroy());
+  w.platform.handlers.clear();
+  await w.platform.discoverDevices();
+  await w.clock.advance(MINUTE);
+
+  const serials = w.accessories().map(x => x.context.deviceSerial).sort();
+  assert.deepEqual(serials, ['aaaaaaaaaaaa', 'ffffffffffff'],
+    'a second accessory, not the first one silently repointed');
   w.restore();
 });

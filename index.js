@@ -654,25 +654,16 @@ class OmletCoopPlatform {
         this.log.info(`Upgraded from ${this.previousVersion || 'an earlier version'} to ${PLUGIN_VERSION}`);
       }
       
-      if (!this.deviceId) {
-        this.log.info('Discovering device ID');
-        await this.autoDiscoverDevice();
-      }
-      
-      if (!this.deviceId) {
-        if (!this.authFailedDiscovery) {
-          this.log.error('No device ID found! Please ensure your coop door is connected to your Omlet account and try again.');
-        }
-        
-        return;
-      }
+      // Every door on the account is set up, so there is no single device ID to
+      // find any more. discoverDevices lists them and creates one accessory each.
+      await this.discoverDevices();
       
       // Discovery succeeding is proof the credential works, so clean config.json now
       // rather than after the first poll - the settings UI cannot reliably delete a
       // key, so this is the mechanism users actually depend on.
-      await this.settleCredentials();
-      
-      await this.discoverDevices();
+      if (this.credentialVerified) {
+        await this.settleCredentials();
+      }
       
     } catch (error) {
       this.log.error('Initialization failed:', error.message);
@@ -869,7 +860,9 @@ class OmletCoopPlatform {
                       deviceId: device.deviceId,
                       serial: device.deviceSerial || null,
                       name: device.name || 'Omlet Device',
-                      type: device.deviceType || 'unknown'
+                      type: device.deviceType || 'unknown',
+                      isDoor: !!(device.state && device.state.door),
+                      isFeeder: !!(device.state && device.state.feeder)
                     });
                   });
                 }
@@ -1103,61 +1096,161 @@ class OmletCoopPlatform {
     this.wasDisconnected = false;
   }
   
+  // Discovery is the first call after sign-in, so it is where a rejected credential
+  // shows up. One retry, because handleAuthError may have swapped in a working one.
+  async discoverWithAuthRetry(isRetry = false) {
+    try {
+      const devices = await this.discoverAllDevices();
+      this.credentialVerified = true;
+      return devices;
+    } catch (error) {
+      if (!isRetry && (error.statusCode === 401 || error.statusCode === 403)) {
+        if (await this.handleAuthError()) {
+          return this.discoverWithAuthRetry(true);
+        }
+        
+        this.authFailedDiscovery = true;
+        this.log.error('Could not sign in to Omlet. Open the Omlet Coop plugin settings and log in again.');
+        return [];
+      }
+      
+      throw error;
+    }
+  }
+  
+  // Which accessory, if any, already represents this device. Serial first: it is the
+  // wifi MAC and survives a factory reset, where the device ID does not.
+  findAccessoryFor(device, claimed) {
+    const free = this.accessories.filter(item => !claimed.has(item));
+    
+    if (device.serial) {
+      const bySerial = free.find(item => item.context.deviceSerial === device.serial);
+      if (bySerial) {
+        return bySerial;
+      }
+    }
+    
+    // Serial is authoritative wherever both sides have one: a device ID can be
+    // reissued, a MAC cannot, so two different serials are two different doors and
+    // no amount of UUID agreement makes them the same. Only accessories with no
+    // serial recorded are eligible for the weaker matches - which on upgrade is all
+    // of them, since the serial is written on the first poll.
+    const eligible = device.serial
+      ? free.filter(item => !item.context.deviceSerial)
+      : free;
+    
+    const uuid = this.api.hap.uuid.generate('omlet-coop-' + device.deviceId);
+    return eligible.find(item => item.UUID === uuid)
+      || eligible.find(item => item.context.deviceId === device.deviceId);
+  }
+  
   async discoverDevices() {
     this.log.info('Setting up Homebridge accessories...');
     
-    const uuid = this.api.hap.uuid.generate('omlet-coop-' + this.deviceId);
-    let accessory = this.accessories.find(item => item.UUID === uuid);
+    let devices;
     
-    // If the coop was replaced it has a new device ID, and therefore a new UUID.
-    // Do NOT unregister and re-register in that case: that destroys the HomeKit
-    // accessory and takes the user's room, name, automations and scenes with it.
-    // Adopt the accessory we already have and quietly point it at the new device -
-    // the UUID becomes historical, which costs nothing.
-    if (!accessory && this.accessories.length > 0) {
-      accessory = this.accessories[0];
+    try {
+      devices = await this.discoverWithAuthRetry();
+    } catch (error) {
+      this.log.error('Could not list the devices on your account:', error.message);
+      devices = [];
     }
     
-    // Only genuine duplicates get removed - never the one in use.
-    const extras = this.accessories.filter(item => item !== accessory);
-    
-    if (extras.length > 0) {
-      extras.forEach(item => this.log.warn('Removing duplicate accessory:', item.displayName));
-      this.api.unregisterPlatformAccessories('homebridge-omlet', 'OmletCoop', extras);
-      this.accessories = this.accessories.filter(item => item === accessory);
+    // Discovery failing must not take the user's accessories with it. A dead
+    // credential or an Omlet outage at startup would otherwise empty HomeKit, when
+    // the right behaviour is to bring back what we had, show it as unreachable, and
+    // let the back-off keep trying. Rebuilt from what each accessory remembers.
+    if (devices.length === 0 && this.accessories.length > 0) {
+      this.log.warn('Could not reach Omlet - keeping the existing accessories and retrying');
+      
+      devices = this.accessories
+        .filter(item => item.context.deviceId)
+        .map(item => ({
+          deviceId: item.context.deviceId,
+          serial: item.context.deviceSerial || null,
+          name: item.displayName,
+          type: 'Autodoor',
+          isDoor: true
+        }));
     }
     
-    if (accessory) {
-      // An adopted accessory keeps its original UUID forever, so comparing that to
-      // the freshly generated one reports a change on every startup. Compare against
-      // the device ID we recorded instead, and record it now - an accessory from
-      // before this was stored adopts silently rather than announcing a change that
-      // never happened.
-      const known = accessory.context.deviceId;
-      
-      if (known !== this.deviceId) {
-        if (known) {
-          this.log.info('Device ID changed; keeping the existing HomeKit accessory and pointing it at the new device');
-        }
-        
-        accessory.context.deviceId = this.deviceId;
-        this.api.updatePlatformAccessories([accessory]);
-      }
-      
-      this.handlers.set(this.deviceId, new OmletCoopAccessory(this, accessory));
+    // Nothing cached either, but a device ID in storage says a door was set up
+    // before. Publish it and let the poll loop report the real problem, rather than
+    // starting up with no accessories at all.
+    if (devices.length === 0 && this.deviceId) {
+      devices = [{ deviceId: this.deviceId, serial: null, name: 'Omlet Coop',
+                   type: 'Autodoor', isDoor: true }];
+    }
+    
+    // Dispatch on the state sections a device reports, not on deviceType: the SDK
+    // types that as a bare string with no enumeration, so the shape is the reliable
+    // signal and the type string is only a hint.
+    const doors = devices.filter(device => device.deviceId && device.isDoor);
+    const skipped = devices.length - doors.length;
+    
+    if (skipped > 0) {
+      this.log.info(`Ignoring ${skipped} device(s) that are not coop doors`);
+    }
+    
+    if (doors.length === 0) {
+      this.log.error('No coop door found on this account. Check the Omlet app, then restart Homebridge.');
       return;
     }
     
-    this.log.info('Adding new accessory: Omlet Coop');
-    const coopAccessory = new this.api.platformAccessory('Omlet Coop', uuid);
-    coopAccessory.context.deviceId = this.deviceId;
-    this.handlers.set(this.deviceId, new OmletCoopAccessory(this, coopAccessory));
-    this.api.registerPlatformAccessories('homebridge-omlet', 'OmletCoop', [coopAccessory]);
+    const claimed = new Set();
     
-    // configureAccessory only runs for accessories restored from cache, so without
-    // this the platform does not know about one it just created until the next
-    // restart - and cannot remove it.
-    this.accessories.push(coopAccessory);
+    doors.forEach((device, index) => {
+      let accessory = this.findAccessoryFor(device, claimed);
+      
+      // An upgrade from a single-door version: one door, one accessory, and nothing
+      // matched because it predates both the serial and the stored device ID. It can
+      // only be this one, so adopt rather than stranding the user's rooms and
+      // automations on a dead tile.
+      //
+      // Only for an accessory with no serial recorded. One that has a serial and did
+      // not match is different hardware, and adopting it would undo the check above.
+      if (!accessory && doors.length === 1 && this.accessories.length === 1
+          && claimed.size === 0 && !this.accessories[0].context.deviceSerial) {
+        accessory = this.accessories[0];
+        this.log.info(`Adopting the existing HomeKit accessory for "${device.name}"`);
+      }
+      
+      if (!accessory) {
+        this.log.info(`Adding new accessory: ${device.name}`);
+        accessory = new this.api.platformAccessory(device.name, this.api.hap.uuid.generate('omlet-coop-' + device.deviceId));
+        accessory.context.deviceId = device.deviceId;
+        accessory.context.deviceSerial = device.serial || undefined;
+        this.api.registerPlatformAccessories('homebridge-omlet', 'OmletCoop', [accessory]);
+        
+        // configureAccessory only runs for accessories restored from cache, so
+        // without this the platform does not know about one it just created.
+        this.accessories.push(accessory);
+      } else if (accessory.context.deviceId !== device.deviceId) {
+        if (accessory.context.deviceId) {
+          this.log.info(`Device ID changed for "${device.name}"; keeping the existing HomeKit accessory`);
+        }
+        
+        accessory.context.deviceId = device.deviceId;
+        accessory.context.deviceSerial = device.serial || accessory.context.deviceSerial;
+        this.api.updatePlatformAccessories([accessory]);
+      }
+      
+      claimed.add(accessory);
+      
+      // Stagger: the cloud only refreshes every ~600s, so there is nothing to gain
+      // from every door asking at the same instant.
+      const stagger = index * Math.min(5000, Math.floor(this.pollInterval / Math.max(doors.length, 1)));
+      this.handlers.set(device.deviceId, new OmletCoopAccessory(this, accessory, device, stagger));
+    });
+    
+    // Accessories left over are doors that are no longer on the account. Removing
+    // them is a policy decision that belongs with periodic rediscovery, so for now
+    // they are reported and left in place.
+    const orphans = this.accessories.filter(item => !claimed.has(item));
+    
+    if (orphans.length > 0) {
+      this.log.warn(`${orphans.length} accessory(s) no longer match a device on your account: ${orphans.map(o => o.displayName).join(', ')}`);
+    }
   }
   
   // Stop a handler and take its accessory out of HomeKit. Separate from deciding
@@ -1195,12 +1288,15 @@ class OmletCoopPlatform {
 
 // Combined accessory with linked services
 class OmletCoopAccessory {
-  constructor(platform, accessory) {
+  constructor(platform, accessory, device, startDelay = 0) {
     this.platform = platform;
     this.accessory = accessory;
     this.log = platform.log;
     
-    this.deviceId = platform.deviceId;
+    this.device = device || { deviceId: platform.deviceId, name: accessory.displayName };
+    this.deviceId = this.device.deviceId;
+    this.name = this.device.name || accessory.displayName;
+    this.startDelay = startDelay;
     this.baseUrl = platform.baseUrl;
     this.pollInterval = platform.pollInterval;
 
@@ -2383,7 +2479,7 @@ class OmletCoopAccessory {
   }
 
   startPolling() {
-    this.log.info(`Polling every ${this.pollInterval / 1000}s`);
-    this.scheduleNextPoll(0);
+    this.log.info(`${this.name}: polling every ${this.pollInterval / 1000}s`);
+    this.scheduleNextPoll(this.startDelay || 0);
   }
 }
