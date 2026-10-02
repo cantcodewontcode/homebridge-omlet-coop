@@ -103,8 +103,10 @@ test('turning it off removes the service', async () => {
   await w.clock.advance(60 * 1000);
   assert.ok(w.accessory().getService(hap.Service.LightSensor), 'present while enabled');
 
-  // What a restart after unticking the box looks like.
+  // What unticking the box looks like. The setting is resolved per device now, so
+  // the handler's own copy is the one that decides.
   w.platform.enableLightSensor = false;
+  w.platform.handlers.get('dev1').settings.enableLightSensor = false;
   await w.clock.advance(3 * 60 * 1000);
 
   assert.equal(w.accessory().getService(hap.Service.LightSensor), undefined, 'removed');

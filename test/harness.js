@@ -412,6 +412,11 @@ function loadPlatformClass(fakes) {
 
 // ---------- one call to build a world
 
+// Log assertions take a substring or a regular expression.
+function matches(message, fragment) {
+  return fragment instanceof RegExp ? fragment.test(message) : message.includes(fragment);
+}
+
 function setup(options = {}) {
   const clock = makeClock();
   const cloud = makeCloud();
@@ -434,12 +439,27 @@ function setup(options = {}) {
 
   return {
     platform, api, cloud, clock, fs: fsFake, logs, config,
-    said: (fragment) => logs.filter(l => l.message.includes(fragment)),
-    saidOnce: (fragment) => logs.filter(l => l.message.includes(fragment)).length === 1,
+    said: (fragment) => logs.filter(l => matches(l.message, fragment)),
+    saidOnce: (fragment) => logs.filter(l => matches(l.message, fragment)).length === 1,
     lines: () => logs.map(l => `${l.level}  ${l.message}`),
     // startPolling() schedules the first poll on a 0ms timer, so the clock has to
     // turn once for a freshly started platform to have talked to the cloud at all.
     start: async () => { await api.fire('didFinishLaunching'); await clock.advance(0); },
+    // An accessory Homebridge hands back from the cache before didFinishLaunching.
+    // No serial unless one is given: that is what an accessory created before 0.9.10
+    // looks like, and several rules turn on the difference.
+    cache: (deviceId, displayName, serial) => {
+      const accessory = new FakeAccessory(displayName, hap.uuid.generate('omlet-coop-' + deviceId));
+      accessory.context.deviceId = deviceId;
+      
+      if (serial) {
+        accessory.context.deviceSerial = serial;
+      }
+      
+      platform.configureAccessory(accessory);
+      
+      return accessory;
+    },
     // platform.accessories is the live list - api.registered is an append-only log of
     // registrations and never shrinks, so it counts accessories that have been removed.
     accessory: () => platform.accessories[0] || api.registered[0],

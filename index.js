@@ -209,6 +209,12 @@ class OmletCoopPlatform {
     // applyLightSensorService for why.
     this.enableLightSensor = config.enableLightSensor === true;
     
+    // Per-device overrides, keyed on the hardware serial where there is one and the
+    // device ID otherwise. Anything absent falls through to the plugin-level setting
+    // above, which is what an upgrade relies on: a single-door user who switched the
+    // light accessory off keeps it off, with no migration step and no config rewrite.
+    this.deviceOverrides = this.indexDeviceOverrides(config.devices);
+    
     // 0 disables removal entirely. 720 hours is 30 days.
     this.removeAfterMs = this.validateHours(config.removeAfterHours) * 60 * 60 * 1000;
     
@@ -796,55 +802,6 @@ class OmletCoopPlatform {
     });
   }
   
-  async autoDiscoverDevice(isRetry = false) {
-    try {
-      this.log.info('Discovering devices on your account...');
-      
-      const devices = await this.discoverAllDevices();
-      this.credentialVerified = true;
-      
-      if (devices.length === 0) {
-        this.log.warn('No devices found on your account');
-        return;
-      }
-      
-      if (devices.length === 1) {
-        this.deviceId = devices[0].deviceId;
-        await this.saveStoredCredentials();
-        this.log.info('✓ Auto-discovered device:', devices[0].name, '(', this.deviceId, ')');
-      } else {
-        this.log.warn('Multiple devices found on your account:');
-        devices.forEach((device, index) => {
-          this.log.warn(`  ${index + 1}. ${device.name} (${device.deviceId})`);
-        });
-        this.log.warn('→ Please add one to your config.json: "deviceId": "DEVICE_ID_HERE"');
-      }
-      
-    } catch (error) {
-      // Discovery runs before any polling, so this is the first place a bad
-      // credential shows up. Without this, a rejected key from config.json stops
-      // setup dead: no device, no polling, and therefore no chance to fall back to
-      // the working credential in storage or to clean config.json up afterwards.
-      if (!isRetry && (error.statusCode === 401 || error.statusCode === 403)) {
-        const recovered = await this.handleAuthError();
-        
-        if (recovered) {
-          return this.autoDiscoverDevice(true);
-        }
-      }
-      
-      // Point at the actual cause. "Check your coop is connected" sends someone to
-      // the wrong place entirely when the real problem is a rejected credential.
-      if (error.statusCode === 401 || error.statusCode === 403) {
-        this.authFailedDiscovery = true;
-        this.log.error('Could not sign in to Omlet. Open the Omlet Coop plugin settings and log in again.');
-        return;
-      }
-      
-      this.log.error('Device discovery failed:', error.message);
-    }
-  }
-  
   discoverAllDevices() {
     return new Promise((resolve, reject) => {
       const options = {
@@ -1273,11 +1230,177 @@ class OmletCoopPlatform {
     this.schedulePoll(0);
   }
   
+  // Serials arrive as a MAC and people retype them with whatever separators and
+  // case they please. Match on the digits.
+  overrideKey(value) {
+    if (typeof value !== 'string') {
+      return null;
+    }
+    
+    const key = value.toLowerCase().replace(/[^a-z0-9]/g, '');
+    
+    return key || null;
+  }
+  
+  indexDeviceOverrides(devices) {
+    const index = new Map();
+    
+    if (!Array.isArray(devices)) {
+      return index;
+    }
+    
+    devices.forEach((entry) => {
+      if (!entry || typeof entry !== 'object') {
+        return;
+      }
+      
+      // Indexed under both keys so an entry written before the device had ever been
+      // polled - device ID only - still matches once the serial is known.
+      const serial = this.overrideKey(entry.serial || entry.deviceSerial);
+      const deviceId = this.overrideKey(entry.deviceId);
+      
+      if (serial) {
+        index.set('serial:' + serial, entry);
+      }
+      
+      if (deviceId) {
+        index.set('device:' + deviceId, entry);
+      }
+    });
+    
+    return index;
+  }
+  
+  // Serial first: it survives a factory reset, and the device ID does not.
+  lookupOverride(device) {
+    const serial = this.overrideKey(device.serial);
+    
+    if (serial && this.deviceOverrides.has('serial:' + serial)) {
+      return this.deviceOverrides.get('serial:' + serial);
+    }
+    
+    const deviceId = this.overrideKey(device.deviceId);
+    
+    if (deviceId && this.deviceOverrides.has('device:' + deviceId)) {
+      return this.deviceOverrides.get('device:' + deviceId);
+    }
+    
+    return null;
+  }
+  
+  // What this one device should publish. Every field falls back to the plugin-level
+  // setting, so a config with no devices array behaves exactly as it did before.
+  deviceSettings(device) {
+    const entry = this.lookupOverride(device) || {};
+    const light = entry.enableLight === undefined
+      ? this.enableLight
+      : this.normalizeTriState(entry.enableLight, 'enableLight');
+    
+    return {
+      // Forcing the light on is not offered here either; see the constructor.
+      enableLight: light === true ? 'auto' : light,
+      enableBattery: entry.enableBattery === undefined
+        ? this.enableBattery
+        : this.normalizeTriState(entry.enableBattery, 'enableBattery'),
+      enableLightSensor: entry.enableLightSensor === undefined
+        ? this.enableLightSensor
+        : entry.enableLightSensor === true
+    };
+  }
+  
+  // A disabled device is unregistered from HomeKit, not merely left unpolled: a
+  // registered accessory that never updates looks broken, and the user asked for it
+  // to go. It stays in the device list the settings page shows, so it can come back.
+  isExcluded(device) {
+    const entry = this.lookupOverride(device);
+    
+    if (entry && entry.enabled !== undefined) {
+      return entry.enabled === false;
+    }
+    
+    return !!this.startupDisabled && this.startupDisabled.has(device.deviceId);
+  }
+  
+  // Which devices to publish when the config says nothing at all. A pre-0.9.10
+  // install could only ever publish one door, so meeting a multi-door account for
+  // the first time must not silently fill HomeKit with tiles the user never asked
+  // for. Decided once, on the first discovery: a door that turns up later is new,
+  // not pre-existing, and arrives enabled.
+  planEnablement(devices) {
+    if (this.startupDisabled || this.deviceOverrides.size > 0) {
+      return;
+    }
+    
+    this.startupDisabled = new Set();
+    
+    // One cached accessory and more than one device is the upgrade case exactly.
+    // None means a fresh install, and two or more means this install already
+    // publishes several doors, so it is not an upgrade at all.
+    if (devices.length < 2 || this.accessories.length !== 1) {
+      return;
+    }
+    
+    const incumbent = this.findIncumbent(devices);
+    
+    if (!incumbent) {
+      return;
+    }
+    
+    devices.forEach((device) => {
+      if (device !== incumbent) {
+        this.startupDisabled.add(device.deviceId);
+      }
+    });
+    
+    this.log.warn(`Found ${devices.length} devices on your account, and only "${incumbent.name}" was set up before. The others start disabled so they do not appear in HomeKit unasked - open the plugin settings to enable them.`);
+  }
+  
+  // Which device the one existing accessory stands for. Accessories created before
+  // 0.9.10 carry no serial, so the stored device ID is often the only link.
+  findIncumbent(devices) {
+    const accessory = this.accessories[0];
+    const serial = this.overrideKey(accessory.context.deviceSerial);
+    
+    if (serial) {
+      const match = devices.find(device => this.overrideKey(device.serial) === serial);
+      
+      if (match) {
+        return match;
+      }
+    }
+    
+    const ids = new Set([accessory.context.deviceId, this.deviceId]
+      .map(value => this.overrideKey(value))
+      .filter(Boolean));
+    const byId = devices.find(device => ids.has(this.overrideKey(device.deviceId)));
+    
+    if (byId) {
+      return byId;
+    }
+    
+    // Nothing matched - a factory reset while the plugin was off, most likely.
+    // Publishing nothing would leave the plugin silently doing nothing at all, which
+    // is worse than publishing a door the user can switch off.
+    this.log.warn('None of the devices on your account match the one already in HomeKit. Publishing all of them.');
+    
+    return null;
+  }
+  
   applyDiscovery(devices, authoritative) {
     const claimed = new Set();
     const seenSerials = new Set();
     
-    devices.forEach((device, index) => {
+    this.planEnablement(devices);
+    
+    devices.forEach((device) => {
+      // Disabled devices are unregistered and then simply not tracked. They are not
+      // left to the missing-device timer: there is nothing of theirs left in HomeKit
+      // to clean up, and the device has not gone anywhere.
+      if (this.isExcluded(device)) {
+        this.excludeDevice(device);
+        return;
+      }
+      
       const existing = this.handlers.get(device.deviceId);
       
       if (existing) {
@@ -1340,11 +1463,7 @@ class OmletCoopPlatform {
       
       claimed.add(accessory);
       this.missingSince.delete(accessory.UUID);
-      
-      // Stagger: the cloud only refreshes every ~600s, so there is nothing to gain
-      // from every door asking at the same instant.
-      const stagger = index * Math.min(5000, Math.floor(this.pollInterval / Math.max(devices.length, 1)));
-      this.handlers.set(device.deviceId, new OmletCoopAccessory(this, accessory, device, stagger));
+      this.handlers.set(device.deviceId, new OmletCoopAccessory(this, accessory, device));
     });
     
     if (authoritative) {
@@ -1487,11 +1606,38 @@ class OmletCoopPlatform {
       return false;
     }
     
+    return this.removeAccessory(accessory, reason);
+  }
+  
+  removeAccessory(accessory, reason) {
     this.log.info(`Removing "${accessory.displayName}" from HomeKit${reason ? ': ' + reason : ''}`);
     this.api.unregisterPlatformAccessories('homebridge-omlet', 'OmletCoop', [accessory]);
     this.accessories = this.accessories.filter(item => item !== accessory);
+    this.missingSince.delete(accessory.UUID);
     
     return true;
+  }
+  
+  // Take a disabled device back out of HomeKit. Silent once there is nothing left to
+  // remove, which matters when discovery runs on every poll.
+  excludeDevice(device) {
+    const handler = this.handlers.get(device.deviceId);
+    
+    if (handler) {
+      handler.destroy();
+      this.handlers.delete(device.deviceId);
+    }
+    
+    const serial = this.overrideKey(device.serial);
+    const accessory = this.accessories.find(item =>
+      (serial && this.overrideKey(item.context.deviceSerial) === serial)
+      || item.context.deviceId === device.deviceId);
+    
+    if (!accessory) {
+      return false;
+    }
+    
+    return this.removeAccessory(accessory, 'disabled in the plugin settings');
   }
   
   configureAccessory(accessory) {
@@ -1506,7 +1652,7 @@ class OmletCoopPlatform {
 
 // Combined accessory with linked services
 class OmletCoopAccessory {
-  constructor(platform, accessory, device, startDelay = 0) {
+  constructor(platform, accessory, device) {
     this.platform = platform;
     this.accessory = accessory;
     this.log = platform.log;
@@ -1514,8 +1660,11 @@ class OmletCoopAccessory {
     this.device = device || { deviceId: platform.deviceId, name: accessory.displayName };
     this.deviceId = this.device.deviceId;
     this.name = this.device.name || accessory.displayName;
-    this.startDelay = startDelay;
     this.baseUrl = platform.baseUrl;
+    
+    // Resolved per device, falling back to the plugin-level settings. Re-read on
+    // retarget, because a serial learned later can bring overrides with it.
+    this.settings = platform.deviceSettings(this.device);
     this.pollInterval = platform.pollInterval;
 
     this.debug = platform.debug;
@@ -1563,10 +1712,10 @@ class OmletCoopAccessory {
     // An explicit true/false is applied immediately. Under "auto" we keep whatever
     // the cached accessory already had and let the first poll decide, so the service
     // does not flicker away and back on every restart.
-    this.applyLightService(platform.enableLight === 'auto' ? this.hasLightService() : platform.enableLight);
-    this.applyBatteryService(platform.enableBattery === 'auto' ? this.hasBatteryService() : platform.enableBattery);
+    this.applyLightService(this.settings.enableLight === 'auto' ? this.hasLightService() : this.settings.enableLight);
+    this.applyBatteryService(this.settings.enableBattery === 'auto' ? this.hasBatteryService() : this.settings.enableBattery);
     
-    this.log.info(`Coop accessory initialized (light: ${this.describePref(platform.enableLight)}, battery: ${this.describePref(platform.enableBattery)})`);
+    this.log.info(`Coop accessory initialized (light: ${this.describePref(this.settings.enableLight)}, battery: ${this.describePref(this.settings.enableBattery)})`);
     
 
   }
@@ -1685,8 +1834,8 @@ class OmletCoopAccessory {
   // than latched at discovery. Moving a coop from mains to batteries, or fitting a
   // light module, is picked up without anyone touching the config.
   desiredLight(status) {
-    if (this.platform.enableLight !== 'auto') {
-      return this.platform.enableLight;
+    if (this.settings.enableLight !== 'auto') {
+      return this.settings.enableLight;
     }
     
     const equipped = status?.configuration?.light?.equipped;
@@ -1707,15 +1856,15 @@ class OmletCoopAccessory {
     // and "Always on" cannot conjure one. A 0% tile on a mains-powered door is worse
     // than no tile: it is wrong, and HomeKit will eventually warn about it.
     if (onMains && count === 0) {
-      if (this.platform.enableBattery === true && !this.batteryOverrideRefused) {
+      if (this.settings.enableBattery === true && !this.batteryOverrideRefused) {
         this.batteryOverrideRefused = true;
         this.log.warn('Battery Status is set to "Always on", but this door reports mains power with no batteries fitted, so no battery accessory is shown.');
       }
       return false;
     }
     
-    if (this.platform.enableBattery !== 'auto') {
-      return this.platform.enableBattery;
+    if (this.settings.enableBattery !== 'auto') {
+      return this.settings.enableBattery;
     }
     
     if (typeof count === 'number' && count > 0) {
@@ -1801,7 +1950,7 @@ class OmletCoopAccessory {
   
   // Opt-in only, and only when the door actually reports a reading.
   desiredLightSensor(status) {
-    return this.platform.enableLightSensor && this.lightLevel(status) !== null;
+    return this.settings.enableLightSensor && this.lightLevel(status) !== null;
   }
   
   // What is published is Omlet's own 0-100 scale, under a characteristic HomeKit
@@ -2508,6 +2657,7 @@ class OmletCoopAccessory {
     this.device = device;
     this.name = device.name || this.name;
     this.accessoryInfoUpdated = false;
+    this.settings = this.platform.deviceSettings(device);
     
     this.accessory.context.deviceId = device.deviceId;
     

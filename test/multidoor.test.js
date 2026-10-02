@@ -255,15 +255,11 @@ test('an old device ID returning is not treated as a new door', async () => {
   w.restore();
 });
 
-// ---------- phases 6 and 7
+// ---------- phase 6: per-device settings and exclusion
 
-test('an excluded device is not published', { todo: 'phase 6' }, async () => {
-  const w = setup({
-    config: { excludeDevices: ['dev2'] },
-    files: { [TOKENS]: JSON.stringify({ bearerToken: 'goodtoken', deviceId: 'dev1' }) }
-  });
-  w.cloud.addDevice(door('dev1', 'Front'));
-  w.cloud.addDevice(door('dev2', 'Back'));
+test('a disabled device is not published', async () => {
+  const w = account([door('dev1', 'Front'), door('dev2', 'Back')], { deviceId: 'dev1' },
+    { devices: [{ deviceId: 'dev2', enabled: false }] });
 
   await w.start();
   await w.clock.advance(MINUTE);
@@ -273,7 +269,136 @@ test('an excluded device is not published', { todo: 'phase 6' }, async () => {
   w.restore();
 });
 
-test('a door added later appears without a restart', { todo: 'phase 7' }, async () => {
+test('disabling a device unregisters it, rather than leaving a stale tile', async () => {
+  const w = account([door('dev1', 'Front'), door('dev2', 'Back')], { deviceId: 'dev1' });
+
+  await w.start();
+  await w.clock.advance(MINUTE);
+  assert.equal(w.accessories().length, 2);
+
+  // What editing the settings and restarting the bridge does.
+  w.platform.deviceOverrides = w.platform.indexDeviceOverrides([{ deviceId: 'dev2', enabled: false }]);
+  await w.clock.advance(MINUTE);
+
+  assert.equal(w.accessories().length, 1, 'gone from HomeKit, not merely unpolled');
+  assert.equal(w.platform.handlers.has('dev2'), false, 'and no handler left running');
+  w.restore();
+});
+
+test('a disabled device is not reported as missing', async () => {
+  const w = account([door('dev1', 'Front'), door('dev2', 'Back')], { deviceId: 'dev1' },
+    { removeAfterHours: 1, devices: [{ deviceId: 'dev2', enabled: false }] });
+
+  await w.start();
+  await w.clock.advance(MINUTE);
+
+  assert.equal(w.said(/no longer on your account/).length, 0,
+    'it has not gone anywhere - the user asked for it to go');
+  w.restore();
+});
+
+test('the disabled notice is not repeated on every poll', async () => {
+  const w = account([door('dev1', 'Front'), door('dev2', 'Back')], { deviceId: 'dev1' },
+    { devices: [{ deviceId: 'dev2', enabled: false }] });
+
+  await w.start();
+  await w.clock.advance(10 * MINUTE);
+
+  assert.ok(w.said(/disabled in the plugin settings/).length <= 1,
+    'discovery runs every poll; the removal must not');
+  w.restore();
+});
+
+test('a device is matched on serial, so it stays disabled across a factory reset', async () => {
+  const a = door('dev1', 'Front');
+  const b = door('dev2', 'Back');
+  b.deviceSerial = 'bbbbbbbbbbbb';
+  const w = account([a, b], { deviceId: 'dev1' },
+    { devices: [{ serial: 'BB:BB:BB:BB:BB:BB', enabled: false }] });
+
+  await w.start();
+  await w.clock.advance(MINUTE);
+
+  assert.equal(w.accessories().length, 1, 'separators and case are not part of a MAC');
+  assert.equal(w.accessories()[0].displayName, 'Front');
+  w.restore();
+});
+
+test('per-device settings beat the plugin-level ones', async () => {
+  const w = account([door('dev1', 'Front', { lightLevel: 50 }), door('dev2', 'Back', { lightLevel: 50 })],
+    { deviceId: 'dev1' },
+    { enableLightSensor: true, devices: [{ deviceId: 'dev2', enableLightSensor: false }] });
+
+  await w.start();
+  await w.clock.advance(MINUTE);
+
+  const byName = {};
+  w.accessories().forEach(a => { byName[a.displayName] = a; });
+
+  assert.ok(byName.Front.getService(hap.Service.LightSensor), 'plugin-level setting applies');
+  assert.equal(byName.Back.getService(hap.Service.LightSensor), undefined, 'per-device override wins');
+  w.restore();
+});
+
+test('a plugin-level setting still applies to a device with no entry of its own', async () => {
+  const w = account([door('dev1', 'Front'), door('dev2', 'Back')], { deviceId: 'dev1' },
+    { enableLight: 'off', devices: [{ deviceId: 'dev2', enabled: true }] });
+
+  await w.start();
+  await w.clock.advance(MINUTE);
+
+  w.accessories().forEach((accessory) => {
+    assert.equal(accessory.getService(hap.Service.Lightbulb), undefined,
+      `${accessory.displayName} keeps the upgrading user's choice`);
+  });
+  w.restore();
+});
+
+// ---------- phase 6: enablement on upgrade
+
+test('upgrading a single-door install does not fill HomeKit unasked', async () => {
+  const w = account([door('dev1', 'Front'), door('dev2', 'Back')], { deviceId: 'dev1' });
+
+  // One accessory in the cache, with no serial: what a pre-0.9.10 install restarts
+  // with.
+  w.cache('dev1', 'Front');
+  await w.start();
+  await w.clock.advance(MINUTE);
+
+  assert.equal(w.accessories().length, 1, 'only the door that was already set up');
+  assert.equal(w.accessories()[0].displayName, 'Front');
+  assert.ok(w.said(/start disabled/).length, 'and the user is told where to enable the rest');
+  w.restore();
+});
+
+test('a fresh install publishes every door it finds', async () => {
+  const w = account([door('dev1', 'Front'), door('dev2', 'Back')], { deviceId: 'dev1' });
+
+  await w.start();
+  await w.clock.advance(MINUTE);
+
+  assert.equal(w.accessories().length, 2, 'nothing to protect, so nothing is held back');
+  w.restore();
+});
+
+test('a door added later arrives enabled', async () => {
+  const w = account([door('dev1', 'Front')], { deviceId: 'dev1' });
+
+  w.cache('dev1', 'Front');
+  await w.start();
+  await w.clock.advance(MINUTE);
+  assert.equal(w.accessories().length, 1);
+
+  // The upgrade rule is decided on the first discovery. A door that turns up
+  // afterwards is new, and new doors are published.
+  w.cloud.addDevice(door('dev2', 'Back'));
+  await w.clock.advance(MINUTE);
+
+  assert.equal(w.accessories().length, 2, 'picked up on the next poll, no restart needed');
+  w.restore();
+});
+
+test('a door added later appears without a restart', async () => {
   const w = account([door('dev1', 'Front')], { deviceId: 'dev1' });
 
   await w.start();
@@ -281,9 +406,9 @@ test('a door added later appears without a restart', { todo: 'phase 7' }, async 
   assert.equal(w.accessories().length, 1);
 
   w.cloud.addDevice(door('dev2', 'Back'));
-  await w.clock.advance(70 * MINUTE);
+  await w.clock.advance(MINUTE);
 
-  assert.equal(w.accessories().length, 2, 'picked up by periodic rediscovery');
+  assert.equal(w.accessories().length, 2, 'every poll is a discovery');
   w.restore();
 });
 
