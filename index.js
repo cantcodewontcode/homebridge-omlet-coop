@@ -1327,9 +1327,11 @@ class OmletCoopPlatform {
         ? this.enableLightSensor
         : entry.enableLightSensor === true,
       // Feeders only. A feeder reports two percentages and HomeKit shows one
-      // battery per accessory, so the user picks which one it means. Anything
-      // other than an explicit "feed" leaves it as the real battery.
-      feederBatteryShows: entry.feederBatteryShows === 'feed' ? 'feed' : 'battery'
+      // battery per accessory, so the user picks which one it means - or neither.
+      // Anything unrecognised falls back to the real battery.
+      feederBatteryShows: ['feed', 'off'].includes(entry.feederBatteryShows)
+        ? entry.feederBatteryShows
+        : 'battery'
     };
   }
   
@@ -1807,7 +1809,7 @@ class FeederAccessory extends OmletDevice {
     
     this.applyBatteryService();
     
-    this.log.info(`Feeder accessory initialized (battery shows: ${this.showsFeedLevel() ? 'feed level' : 'battery level'})`);
+    this.log.info(`Feeder accessory initialized (battery shows: ${this.describeBattery()})`);
   }
   
   // The override. Off by default: a battery reading that is not a battery is
@@ -1816,9 +1818,32 @@ class FeederAccessory extends OmletDevice {
     return this.settings.feederBatteryShows === 'feed';
   }
   
+  showsBattery() {
+    return this.settings.feederBatteryShows !== 'off';
+  }
+  
+  describeBattery() {
+    if (!this.showsBattery()) {
+      return 'nothing';
+    }
+    
+    return this.showsFeedLevel() ? 'feed level' : 'battery level';
+  }
+  
   applyBatteryService() {
-    const service = this.accessory.getService(hap.Service.Battery)
-      || this.accessory.addService(hap.Service.Battery);
+    const existing = this.accessory.getService(hap.Service.Battery);
+    
+    if (!this.showsBattery()) {
+      if (existing) {
+        this.contactService.removeLinkedService(existing);
+        this.accessory.removeService(existing);
+      }
+      
+      this.batteryService = null;
+      return;
+    }
+    
+    const service = existing || this.accessory.addService(hap.Service.Battery);
     
     service.setCharacteristic(hap.Characteristic.Name,
       this.showsFeedLevel() ? 'Feed Level' : 'Battery');
@@ -1974,7 +1999,8 @@ class FeederAccessory extends OmletDevice {
       }
       
       if (this.debug) {
-        this.log.info(`[Poll] ${this.name}: feeder ${state}, ${this.showsFeedLevel() ? 'feed' : 'battery'} ${value}%`);
+        this.log.info(`[Poll] ${this.name}: feeder ${state}` +
+          (this.showsBattery() ? `, ${this.showsFeedLevel() ? 'feed' : 'battery'} ${value}%` : ''));
       }
     } catch (error) {
       this.log.error('[Poll] Failed to push feeder state to HomeKit:', error.message);

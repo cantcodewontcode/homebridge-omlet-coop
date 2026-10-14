@@ -1,24 +1,24 @@
 # Changelog
 
-## [Unreleased]
+## [0.9.10-beta.2] - 2026-10-14
+
+**Beta.** The new multi-door and feeder features have had limited testing on real-world setups. Please report anything odd at [the issue tracker](https://github.com/cantcodewontcode/homebridge-omlet-coop/issues), and use **Capture device payload** in your plugin's advanced settings to attach what your account actually returns.
+
+### Door Updates
+- Added support for multiple Omlet coop doors. Adjust light, battery, and light level settings globally or per-door. (Requested by @stevendark-TSD, #6)
+- Devices now match based on their serial, allowing device matching after a factory reset.
+- Disable a door to hide it from HomeKit. (If a device is disabled and then enabled, it appears as a new device in Apple Home.)
+- **On upgrade from a prior version**, only the existing coop door will show in Apple Home. If you have additional coop doors, simply enable them in plugin settings. (On new installations, all doors add to Apple Home by default.)
+- A door added to your account appears on the next poll, without needing a plugin restart.
+- Optionally expose the door's light sensor. This will show in Apple Home as a lux value, but it is actually an Omlet-proprietary value of 0-100. Useful for triggering light-based automations.
 
 ### Feeders
-- Omlet Smart Feeders on your account are now published to HomeKit as a contact sensor, showing whether the feeder is open or closed, along with any fault it reports.
-- Read-only, deliberately. The Omlet app opens and closes a feeder on a schedule or a light threshold and offers no "open now", so the plugin does not either.
-- A feeder reports both a battery level and a feed level, and Apple Home shows one battery per accessory. The battery shows the real battery level by default, and a per-device setting switches it to feed level instead. In that mode the low-battery warning tells you to refill, and the real batteries stop warning you about anything.
-- A feeder checks in with Omlet about once an hour, so its state is not live the way a door's is. Faults are logged once when they appear rather than on every poll.
-
-## [0.9.10-beta.1] - 2026-10-14
-
-**Beta.** New multi-door capabilities have been added, but have had limited testing on real-world multi-door setups. Please report anything odd at [the issue tracker](https://github.com/cantcodewontcode/homebridge-omlet-coop/issues), and use **Capture device payload** in your plugin's advanced settings to attach what your account actually returns.
-
-### Door Enhancements
-- Added support for multiple Omlet coop doors. (Requested by @stevendark-TSD, #6)
-- Adjust settings per-door for things like the coop light, battery status, and light level sensor.
-- Devices now match based on their hardware serial, so a door keeps its HomeKit accessory and its settings through a factory reset with no risk of a mismatch.
-- Disable a door to hide it from HomeKit. (Later re-enabling of a door brings it back as a brand-new device.)
-- If you upgrade from 0.9.9 or earlier and have multiple doors, only the previously setup door will be automatically available. The other doors will be discovered by the plugin and automatically disabled, to prevent an upgrade from unexpectedly changing behavior. Enable them with Plugin Config.
-- A door added to your account appears in HomeKit on the next poll, without a restart.
+- Added support for Omlet Smart Feeders! (Requested by @stevendark-TSD, #6)
+- Feeders appear as contact sensors, which can be customized in Apple Home to appear as a sensor, door, or other device type. Monitor when feeders are open or closed, along with any faults.
+- Feeders are read-only. The Omlet app controls them on a schedule and does not provide an "open" or "close" command on-demand.
+- By default, feeders report battery level and this will display as the contact sensor's battery level.
+- For users who prefer, feed level can be reported as the feeder accessory battery level (instead of showing the actual battery level). Choose between mapping feed level or battery level to the Apple Home accessory battery level.
+- A feeder checks in with Omlet only periodically, so its state is not live in the same way a door's state is live. It is possible for state reporting to be delayed.
 
 ### Security
 - Debug mode no longer logs account passwords on initial plugin setup.
@@ -27,14 +27,11 @@
 
 ### Settings
 - The settings page now lists every device on the account, with its type and serial.
-- Added a Re-authenticate option. Re-authenticating with this option preserves all existing settings.
-- The Disconnect button has been renamed to **Reset Plugin** and wipes all plugin configuration except for the most basic parameters (like the child bridge setting and plugin name).
-- Added **Capture device payload** to advanced settings. Fetches one response from Omlet and shows it ready to paste into a bug report. The payload replaces serials, device names, email addresses, and network names with placeholder values to protect privacy. Nothing is written to the log.
-- Added **Remove accessories not seen for (hours)** with a default setting of 24. If a device disappears from your setup momentarily, it will no longer be removed. This is useful when factory resetting a door, to ensure it retains its configuration when it comes back online.
-- Removed the Device ID field from settings, given that all doors are now discovered.
-
-### Accessories
-- Optionally expose the door's light sensor. This will show in Apple Home as a lux value, but it is actually an Omlet-proprietary value of 0-100. Useful for triggering light-based automations.
+- A new **Re-authenticate** button allows users to force a fresh re-authentication while preserving all plugin config.
+- A new **Reset Plugin** button allows users to wipe all plugin configuration without requiring the plugin to be deleted and reinstalled.
+- A new **Capture device payload** button in advanced settings captures a single full payload response from Omlet API, and displays it for easy copy/paste. This is useful for troubleshooting issues with the plugin. The function automatically removes sensitive information like device name and wi-fi name.
+- The system now automatically removes accessories not seen for 24 hours. The number of hours can be adjusted or set to 0 to disable. This allows devices to automatically be dropped after they are removed from your setup, and also allows devices which are factory reset to be preserved in Apple Home with their existing settings.
+- Removed the Device ID field from settings, given that all accessories are now discovered.
 
 ### Reliability
 - One request covers every device on the account, reducing the impact on Omlet's servers.

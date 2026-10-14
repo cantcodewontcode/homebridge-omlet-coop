@@ -131,6 +131,32 @@ test('only one battery service exists either way', async () => {
   w.restore();
 });
 
+test('"nothing" publishes no battery at all', async () => {
+  const w = account([feeder('feed1', 'Feeder')],
+    { devices: [{ deviceId: 'feed1', feederBatteryShows: 'off' }] });
+
+  await w.start();
+  await w.clock.advance(MINUTE);
+
+  const accessory = named(w, 'Feeder');
+  assert.equal(accessory.getService(hap.Service.Battery), undefined,
+    'some people do not want a battery tile for a feeder at all');
+  assert.ok(accessory.getService(hap.Service.ContactSensor), 'the feeder itself stays');
+  w.restore();
+});
+
+test('an unrecognised battery setting falls back to the real battery', async () => {
+  const w = account([feeder('feed1', 'Feeder', { batteryLevel: 63, feedLevel: 59 })],
+    { devices: [{ deviceId: 'feed1', feederBatteryShows: 'nonsense' }] });
+
+  await w.start();
+  await w.clock.advance(MINUTE);
+
+  const battery = named(w, 'Feeder').getService(hap.Service.Battery);
+  assert.equal(battery.getCharacteristic(hap.Characteristic.BatteryLevel).value, 63);
+  w.restore();
+});
+
 test('low feed trips the low-battery warning in feed mode', async () => {
   const w = account([feeder('feed1', 'Feeder', { batteryLevel: 90, feedLevel: 8 })],
     { devices: [{ deviceId: 'feed1', feederBatteryShows: 'feed' }] });

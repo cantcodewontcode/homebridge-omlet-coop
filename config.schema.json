@@ -231,9 +231,15 @@
                   "enum": [
                     "feed"
                   ]
+                },
+                {
+                  "title": "Nothing",
+                  "enum": [
+                    "off"
+                  ]
                 }
               ],
-              "description": "Feeders only. A feeder reports both a battery level and a feed level, and HomeKit shows one battery per accessory. Showing feed level means the low-battery warning tells you to refill, and the real batteries no longer warn you about anything."
+              "description": "Feeders only. A feeder reports both a battery level and a feed level, and HomeKit shows one battery per accessory. Showing feed level means the low-battery warning tells you to refill, and the real batteries no longer warn you about anything. \"Nothing\" publishes no battery at all."
             }
           }
         }

@@ -562,7 +562,12 @@ class OmletPluginUiServer extends HomebridgePluginUiServer {
                   name: device.name || 'Unknown Device',
                   type: device.deviceType || 'Unknown',
                   // Surfaced so the settings page can show what auto-detection sees
-                  lightEquipped: Number(device.configuration?.light?.equipped) > 0,
+                  // Absent section means the device has no light at all - a feeder
+                  // has no `configuration.light`. That is "not applicable", not
+                  // "not fitted", and the settings page says nothing about it.
+                  lightEquipped: device.configuration?.light
+                    ? Number(device.configuration.light.equipped) > 0
+                    : undefined,
                   powerSource: device.state?.general?.powerSource || null,
                   batteryLevel: device.state?.general?.batteryLevel ?? null,
                   firmware: device.state?.general?.firmwareVersionCurrent || null

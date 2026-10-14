@@ -1538,7 +1538,9 @@ function togglePasswordVisibility() {
       const light = entry.enableLight === undefined ? '' : entry.enableLight;
       const battery = entry.enableBattery === undefined ? '' : entry.enableBattery;
       const sensor = entry.enableLightSensor;
-      const feederShows = entry.feederBatteryShows === 'feed' ? 'feed' : 'battery';
+      const feederShows = ['feed', 'off'].includes(entry.feederBatteryShows)
+        ? entry.feederBatteryShows
+        : 'battery';
       
       // A feeder has none of the door's options. It has one of its own: HomeKit
       // shows a single battery per accessory, and a feeder reports two percentages.
@@ -1548,9 +1550,10 @@ function togglePasswordVisibility() {
             <select class="form-control" data-role="feederBatteryShows">
               <option value="battery"${feederShows === 'battery' ? ' selected' : ''}>Battery level</option>
               <option value="feed"${feederShows === 'feed' ? ' selected' : ''}>Feed level</option>
+              <option value="off"${feederShows === 'off' ? ' selected' : ''}>Nothing</option>
             </select>
             <small class="form-text text-muted">
-              A feeder reports both, and Apple Home shows one battery per accessory. Showing feed level means the low-battery warning tells you to refill, and the real batteries stop warning you about anything.
+              A feeder reports both, and Apple Home shows one battery per accessory. Showing feed level means the low-battery warning tells you to refill, and the real batteries stop warning you about anything. Nothing publishes no battery at all.
             </small>
           </div>
       ` : `
