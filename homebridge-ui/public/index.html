@@ -1556,6 +1556,17 @@ function togglePasswordVisibility() {
               A feeder reports both, and Apple Home shows one battery per accessory. Showing feed level means the low-battery warning tells you to refill, and the real batteries stop warning you about anything. Nothing publishes no battery at all.
             </small>
           </div>
+          <div class="form-group">
+            <label>Light level sensor</label>
+            <select class="form-control" data-role="enableLightSensor">
+              <option value=""${sensor === undefined ? ' selected' : ''}>Use the plugin setting</option>
+              <option value="true"${sensor === true ? ' selected' : ''}>Show</option>
+              <option value="false"${sensor === false ? ' selected' : ''}>Do not show</option>
+            </select>
+            <small class="form-text text-muted">
+              A feeder has its own ambient light sensor, separate from the coop light. It is what opens the feeder on daylight when its mode is set to light rather than time.
+            </small>
+          </div>
       ` : `
           <div class="form-group">
             <label>Coop light accessory</label>

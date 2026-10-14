@@ -25,7 +25,7 @@ function feeder(deviceId, name, opts = {}) {
     lastCloseTime: '2026-10-02T17:30:13+01:00',
     fault: opts.fault || 'none',
     feedLevel: opts.feedLevel === undefined ? 59 : opts.feedLevel,
-    lightLevel: 0,
+    lightLevel: opts.lightLevel === undefined ? 0 : opts.lightLevel,
     mode: 'time'
   };
   device.state.general.batteryLevel = opts.batteryLevel === undefined ? 63 : opts.batteryLevel;
@@ -178,6 +178,74 @@ test('healthy cells do not warn just because the feed is low', async () => {
 
   const battery = named(w, 'Feeder').getService(hap.Service.Battery);
   assert.equal(battery.getCharacteristic(hap.Characteristic.StatusLowBattery).value, 0);
+  w.restore();
+});
+
+test('the light sensor is off by default', async () => {
+  const w = account([feeder('feed1', 'Feeder', { lightLevel: 42 })]);
+
+  await w.start();
+  await w.clock.advance(MINUTE);
+
+  assert.equal(named(w, 'Feeder').getService(hap.Service.LightSensor), undefined,
+    'opt-in, the same as the door');
+  w.restore();
+});
+
+test('the plugin-level light sensor setting reaches a feeder', async () => {
+  const w = account([feeder('feed1', 'Feeder', { lightLevel: 42 })],
+    { enableLightSensor: true });
+
+  await w.start();
+  await w.clock.advance(MINUTE);
+
+  const sensor = named(w, 'Feeder').getService(hap.Service.LightSensor);
+  assert.ok(sensor, 'a feeder has its own ambient sensor, with open/close thresholds');
+  assert.equal(sensor.getCharacteristic(hap.Characteristic.CurrentAmbientLightLevel).value, 42);
+  w.restore();
+});
+
+test('a per-device override turns the feeder light sensor off', async () => {
+  const w = account([feeder('feed1', 'Feeder', { lightLevel: 42 })],
+    { enableLightSensor: true,
+      devices: [{ deviceId: 'feed1', enableLightSensor: false }] });
+
+  await w.start();
+  await w.clock.advance(MINUTE);
+
+  assert.equal(named(w, 'Feeder').getService(hap.Service.LightSensor), undefined);
+  w.restore();
+});
+
+test('a per-device override turns it on when the plugin setting is off', async () => {
+  const w = account([feeder('feed1', 'Feeder', { lightLevel: 42 })],
+    { devices: [{ deviceId: 'feed1', enableLightSensor: true }] });
+
+  await w.start();
+  await w.clock.advance(MINUTE);
+
+  assert.ok(named(w, 'Feeder').getService(hap.Service.LightSensor));
+  w.restore();
+});
+
+test('everything lives on one accessory, never a companion', async () => {
+  const w = account([feeder('feed1', 'Feeder', { lightLevel: 42 })],
+    { enableLightSensor: true });
+
+  await w.start();
+  await w.clock.advance(MINUTE);
+
+  assert.equal(w.accessories().length, 1, 'one feeder, one accessory');
+
+  const accessory = named(w, 'Feeder');
+  const types = accessory.services.map(s => s.type).sort();
+  assert.deepEqual(types, ['AccessoryInformation', 'Battery', 'ContactSensor', 'LightSensor']);
+
+  // Linked to the contact sensor, which is primary - that is what asks HomeKit to
+  // present them together rather than as loose services.
+  const contact = accessory.getService(hap.Service.ContactSensor);
+  assert.equal(contact.primary, true);
+  assert.equal(contact.linked.size, 2, 'battery and light sensor both linked');
   w.restore();
 });
 

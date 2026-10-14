@@ -18,6 +18,7 @@
 - Feeders are read-only. The Omlet app controls them on a schedule and does not provide an "open" or "close" command on-demand.
 - By default, feeders report battery level and this will display as the contact sensor's battery level.
 - For users who prefer, feed level can be reported as the feeder accessory battery level (instead of showing the actual battery level). Choose between mapping feed level or battery level to the Apple Home accessory battery level.
+- Feeders have their own ambient light sensor, separate from the coop light, and it can be exposed the same way a door's is — globally or per-feeder. This is the sensor that opens the feeder on daylight when its mode is set to light rather than time.
 - A feeder checks in with Omlet only periodically, so its state is not live in the same way a door's state is live. It is possible for state reporting to be delayed.
 
 ### Security

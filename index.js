@@ -1809,6 +1809,11 @@ class FeederAccessory extends OmletDevice {
     
     this.applyBatteryService();
     
+    // Keep whatever the cached accessory had until the first poll says whether this
+    // feeder reports a light level at all, so the tile does not flicker away and
+    // back on every restart.
+    this.applyLightSensorService(this.settings.enableLightSensor && this.hasLightSensorService());
+    
     this.log.info(`Feeder accessory initialized (battery shows: ${this.describeBattery()})`);
   }
   
@@ -1859,6 +1864,66 @@ class FeederAccessory extends OmletDevice {
     
     this.contactService.addLinkedService(service);
     this.batteryService = service;
+  }
+  
+  // A feeder carries its own ambient light sensor, the same as a door: it has
+  // openLightLevel and closeLightLevel thresholds and opens on daylight when its
+  // mode is set to light rather than time. This is not the coop light, which a
+  // feeder does not have.
+  lightLevel(status = this.cachedStatus) {
+    const raw = status?.state?.feeder?.lightLevel;
+    
+    if (raw === undefined || raw === null || raw === '') {
+      return null;
+    }
+    
+    const level = Number(raw);
+    
+    return Number.isFinite(level) ? Math.max(0, level) : null;
+  }
+  
+  hasLightSensorService() {
+    return !!this.accessory.getService(hap.Service.LightSensor);
+  }
+  
+  // Opt-in, and only when the feeder actually reports a reading. What is published
+  // is Omlet's own 0-100 scale under a characteristic HomeKit defines in lux - the
+  // same deliberate mismatch the door has.
+  desiredLightSensor(status) {
+    return this.settings.enableLightSensor && this.lightLevel(status) !== null;
+  }
+  
+  applyLightSensorService(enabled) {
+    const existing = this.accessory.getService(hap.Service.LightSensor);
+    
+    if (!enabled) {
+      if (existing) {
+        this.contactService.removeLinkedService(existing);
+        this.accessory.removeService(existing);
+      }
+      
+      this.lightSensorService = null;
+      return;
+    }
+    
+    const service = existing || this.accessory.addService(hap.Service.LightSensor);
+    
+    service.setCharacteristic(hap.Characteristic.Name, 'Feeder Light Level');
+    service
+      .getCharacteristic(hap.Characteristic.CurrentAmbientLightLevel)
+      .onGet(this.getAmbientLight.bind(this));
+    this.contactService.addLinkedService(service);
+    this.lightSensorService = service;
+  }
+  
+  async getAmbientLight() {
+    const level = this.lightLevel();
+    
+    if (level === null) {
+      throw unavailable();
+    }
+    
+    return Math.max(MIN_AMBIENT_LIGHT, level);
   }
   
   // "Closed" is contact detected, matching a door sensor: the hatch is shut.
@@ -1929,6 +1994,15 @@ class FeederAccessory extends OmletDevice {
     
     this.cachedStatus = status;
     this.updateAccessoryInfo(status);
+    
+    const wanted = this.desiredLightSensor(status);
+    
+    if (wanted !== this.hasLightSensorService()) {
+      this.log.info(`Light level sensor ${wanted ? 'enabled' : 'removed'} for ${this.name}`);
+      this.applyLightSensorService(wanted);
+      this.platform.api.updatePlatformAccessories([this.accessory]);
+    }
+    
     this.reportFault(status);
     this.pushToHomeKit(status);
   }
@@ -1998,6 +2072,14 @@ class FeederAccessory extends OmletDevice {
           .updateValue(value < 20 ? 1 : 0);
       }
       
+      const light = this.lightLevel(status);
+      
+      if (this.lightSensorService && light !== null) {
+        this.lightSensorService
+          .getCharacteristic(hap.Characteristic.CurrentAmbientLightLevel)
+          .updateValue(Math.max(MIN_AMBIENT_LIGHT, light));
+      }
+      
       if (this.debug) {
         this.log.info(`[Poll] ${this.name}: feeder ${state}` +
           (this.showsBattery() ? `, ${this.showsFeedLevel() ? 'feed' : 'battery'} ${value}%` : ''));
@@ -2012,6 +2094,7 @@ class FeederAccessory extends OmletDevice {
   retarget(device) {
     super.retarget(device);
     this.applyBatteryService();
+    this.applyLightSensorService(this.desiredLightSensor());
   }
 }
 

@@ -161,6 +161,10 @@ default. A per-device setting switches it to feed level, which turns the low-bat
 warning into a "time to refill" alert, at the cost of the real batteries no longer
 warning you about anything.
 
+A feeder also has its own ambient light sensor, separate from the coop light — it is
+what opens the feeder on daylight when its mode is set to light rather than time. It
+can be exposed the same way a door's is, globally or per-feeder.
+
 A feeder checks in with Omlet about once an hour, so its state updates far less often
 than a door's.
 
