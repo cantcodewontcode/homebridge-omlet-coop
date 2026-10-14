@@ -501,7 +501,10 @@ function togglePasswordVisibility() {
       // Not editable any more, but not thrown away either: the plugin uses it to
       // work out which device an upgrading single-door install was already using.
       deviceId: configuredDeviceId() || undefined,
-      devices: deviceEntries.length ? JSON.parse(JSON.stringify(deviceEntries)) : undefined,
+      // Always sent, even when empty. updatePluginConfig merges, so omitting the key
+      // leaves the previous array in place - and pruning the last entry would then
+      // never actually remove anything.
+      devices: JSON.parse(JSON.stringify(deviceEntries)),
       enableLight: document.getElementById('enableLight').value,
       enableBattery: document.getElementById('enableBattery').value,
       enableLightSensor: document.getElementById('enableLightSensor').checked,
@@ -1430,6 +1433,7 @@ function togglePasswordVisibility() {
   async function saveDeviceEntries(item, device) {
     pruneEntries();
     await updateConfigFromForm();
+    currentConfig.devices = JSON.parse(JSON.stringify(deviceEntries));
     
     if (!item || !device) {
       return;
