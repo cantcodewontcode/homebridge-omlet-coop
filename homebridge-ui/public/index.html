@@ -331,6 +331,19 @@
           <input type="checkbox" id="debugMode"> Enable Debug logging mode
         </label>
       </div>
+      
+      <div class="form-group" style="margin-bottom: 0;">
+        <label>Device troubleshooting</label>
+        <button type="button" id="capturePayloadButton" class="btn btn-primary">Capture device payload</button>
+        <label style="display: block; font-weight: normal; margin-top: 8px;">
+          <input type="checkbox" id="capturePayloadRaw"> Include serials, names and network details
+        </label>
+        <small class="form-text text-muted">
+          Fetches one response from Omlet and shows it below, ready to paste into a bug report. Serials, device names, email addresses and your wifi name are replaced with placeholders unless you tick the box above. Nothing is written to the log.
+        </small>
+        <textarea id="capturePayloadOutput" class="form-control hidden" rows="14" readonly
+          style="margin-top: 10px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; white-space: pre;"></textarea>
+      </div>
     </div>
     
     <button id="loginButton" class="btn btn-primary">Login</button>
@@ -644,6 +657,49 @@ function togglePasswordVisibility() {
   // Note: window.confirm is unusable here. This page runs in a sandboxed iframe,
   // where modal dialogs are ignored outright - the call returns false and the click
   // silently does nothing. The red button is the warning.
+  // A single snapshot beats logging every payload: at two polls a minute the log
+  // fills with responses and buries whatever else you were trying to read.
+  document.getElementById('capturePayloadButton').addEventListener('click', async () => {
+    const button = document.getElementById('capturePayloadButton');
+    const output = document.getElementById('capturePayloadOutput');
+    const raw = document.getElementById('capturePayloadRaw').checked;
+    
+    button.disabled = true;
+    button.textContent = 'Capturing...';
+    
+    try {
+      const result = await homebridge.request('/capture-payload', {
+        bearerToken: currentConfig.bearerToken || undefined,
+        redact: !raw
+      });
+      
+      output.value = result.payload;
+      output.classList.remove('hidden');
+      
+      // The settings page runs in a sandboxed iframe, where the clipboard API is
+      // often blocked outright. Selecting the text is the fallback that always works.
+      let copied = false;
+      
+      try {
+        await navigator.clipboard.writeText(result.payload);
+        copied = true;
+      } catch (clipboardError) {
+        output.focus();
+        output.select();
+      }
+      
+      showStatus(copied
+        ? (result.redacted ? 'Payload copied to the clipboard, with identifying details replaced.' : 'Payload copied to the clipboard. It contains serials and network details.')
+        : 'Payload captured and selected below - press Cmd-C or Ctrl-C to copy.', 'success');
+    } catch (error) {
+      output.classList.add('hidden');
+      showStatus('Could not capture the payload: ' + error.message, 'error');
+    } finally {
+      button.disabled = false;
+      button.textContent = 'Capture device payload';
+    }
+  });
+  
   // Separate from Disconnect on purpose. Disconnect used to be the only route back to
   // a login screen, so it got used for credential trouble, and everything it resets
   // went with it as collateral.

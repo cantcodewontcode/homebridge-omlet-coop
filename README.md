@@ -69,6 +69,7 @@ Rarely needed:
 - **Remove accessories not seen for**: How long a device may be missing from your Omlet account before its accessory is removed from HomeKit. Default 24 hours; 0 never removes one
 - **Light Level Sensor**: Off by default. See below before turning it on
 - **Debug Mode**: Enable detailed logging for troubleshooting
+- **Capture device payload**: Fetches one response from Omlet and shows it ready to paste into a bug report. Serials, device names, email addresses and your wifi name are replaced with placeholders unless you ask for them. Nothing is written to the log
 
 #### Light Level Sensor
 

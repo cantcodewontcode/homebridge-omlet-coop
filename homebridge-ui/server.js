@@ -5,6 +5,64 @@ const path = require('path');
 
 const TOKEN_FILE = 'omlet-coop-tokens.json';
 
+// Replace identifying values with stable placeholders, so the same serial reads as
+// the same placeholder everywhere it appears. The structure and the relationships
+// between devices are what make a payload worth reading; the MAC addresses and the
+// account holder's name are not.
+const REDACTED_KEYS = ['emailaddress', 'email', 'firstname', 'lastname', 'ssid',
+                       'deviceserial', 'deviceid', 'name', 'api_key', 'apikey', 'token',
+                       'sitelink', 'displayline1', 'displayline2'];
+
+function redactPayload(text) {
+  let parsed;
+  
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    return text;
+  }
+  
+  const seen = new Map();
+  
+  const label = (key, value) => {
+    const bucket = key.toUpperCase();
+    const id = bucket + '|' + value;
+    
+    if (!seen.has(id)) {
+      const used = [...seen.keys()].filter(k => k.startsWith(bucket + '|')).length;
+      seen.set(id, `[${bucket}_${used + 1}]`);
+    }
+    
+    return seen.get(id);
+  };
+  
+  const walk = (node) => {
+    if (Array.isArray(node)) {
+      return node.map(walk);
+    }
+    
+    if (node && typeof node === 'object') {
+      const out = {};
+      
+      Object.keys(node).forEach((key) => {
+        const value = node[key];
+        
+        if (REDACTED_KEYS.includes(key.toLowerCase()) && typeof value === 'string' && value.trim()) {
+          out[key] = label(key, value);
+        } else {
+          out[key] = walk(value);
+        }
+      });
+      
+      return out;
+    }
+    
+    return node;
+  };
+  
+  return JSON.stringify(walk(parsed), null, 2);
+}
+
 class OmletPluginUiServer extends HomebridgePluginUiServer {
   constructor() {
     super();
@@ -16,6 +74,7 @@ class OmletPluginUiServer extends HomebridgePluginUiServer {
     this.onRequest('/persist-token', this.handlePersistToken.bind(this));
     this.onRequest('/forget', this.handleForget.bind(this));
     this.onRequest('/strip-credentials', this.handleStripCredentials.bind(this));
+    this.onRequest('/capture-payload', this.handleCapturePayload.bind(this));
     
     this.ready();
   }
@@ -62,6 +121,64 @@ class OmletPluginUiServer extends HomebridgePluginUiServer {
     } catch (error) {
       throw new RequestError(`Failed to clean config.json: ${error.message}`, { status: 500 });
     }
+  }
+  
+  // One raw /api/v1/group response, on demand. The alternative was logging every
+  // payload under debug, which at two polls a minute buries everything else - and
+  // what you want is almost always a single snapshot.
+  async handleCapturePayload(payload) {
+    const { bearerToken, redact } = payload || {};
+    const stored = this.readStoredCredentials();
+    const token = (stored && stored.bearerToken) || bearerToken;
+    
+    if (!token) {
+      throw new RequestError('No saved credential to capture with. Sign in first.', { status: 400 });
+    }
+    
+    try {
+      const body = await this.fetchGroupRaw(token);
+      let text;
+      
+      try {
+        text = JSON.stringify(JSON.parse(body), null, 2);
+      } catch (parseError) {
+        text = body;
+      }
+      
+      return redact === false
+        ? { payload: text, redacted: false }
+        : { payload: redactPayload(text), redacted: true };
+    } catch (error) {
+      throw new RequestError(`Could not capture the payload: ${error.message}`, { status: 500 });
+    }
+  }
+  
+  fetchGroupRaw(token) {
+    return new Promise((resolve, reject) => {
+      const req = https.request({
+        hostname: 'x107.omlet.co.uk',
+        port: 443,
+        path: '/api/v1/group',
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' },
+        timeout: 15000
+      }, (res) => {
+        let data = '';
+        
+        res.on('data', (chunk) => { data += chunk; });
+        res.on('end', () => {
+          if (res.statusCode === 200) {
+            resolve(data);
+          } else {
+            reject(new Error(`HTTP ${res.statusCode}`));
+          }
+        });
+      });
+      
+      req.on('timeout', () => { req.destroy(); reject(new Error('Request timed out')); });
+      req.on('error', reject);
+      req.end();
+    });
   }
   
   tokenFilePath() {

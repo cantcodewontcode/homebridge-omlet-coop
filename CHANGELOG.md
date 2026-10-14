@@ -15,6 +15,7 @@
 - Added a Re-authenticate button. Signing in again no longer means using Disconnect, which resets everything else along with the credentials.
 - Added "Remove accessories not seen for (hours)" to advanced settings: how long a device may be missing from your account before its accessory is removed. Default 24, 0 never removes one.
 - Removed the Device ID field. Every device is published now, so pinning one to the plugin no longer means anything. An existing value is still read.
+- Added "Capture device payload" to advanced settings. Fetches one response from Omlet and shows it ready to paste into a bug report, with serials, device names, email addresses and your wifi name replaced by placeholders. A tickbox includes them if you need to. Nothing is written to the log.
 - Power is described as "hardwired" rather than "mains".
 - Changing a device's setting no longer collapses its settings panel.
 
