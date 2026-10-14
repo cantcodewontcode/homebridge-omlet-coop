@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Feeders
+- Omlet Smart Feeders on your account are now published to HomeKit as a contact sensor, showing whether the feeder is open or closed, along with any fault it reports.
+- Read-only, deliberately. The Omlet app opens and closes a feeder on a schedule or a light threshold and offers no "open now", so the plugin does not either.
+- A feeder reports both a battery level and a feed level, and Apple Home shows one battery per accessory. The battery shows the real battery level by default, and a per-device setting switches it to feed level instead. In that mode the low-battery warning tells you to refill, and the real batteries stop warning you about anything.
+- A feeder checks in with Omlet about once an hour, so its state is not live the way a door's is. Faults are logged once when they appear rather than on every poll.
+
 ## [0.9.10-beta.1] - 2026-10-14
 
 **Beta.** New multi-door capabilities have been added, but have had limited testing on real-world multi-door setups. Please report anything odd at [the issue tracker](https://github.com/cantcodewontcode/homebridge-omlet-coop/issues), and use **Capture device payload** in your plugin's advanced settings to attach what your account actually returns.

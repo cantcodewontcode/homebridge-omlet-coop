@@ -9,6 +9,7 @@ This Homebridge plugin allows you to control your Omlet coop door and coop light
 - **Easy Setup**: Custom configuration interface with automatic login and device discovery
 - **Coop Door Control**: Open, close, and monitor your Omlet door (as a garage door) in HomeKit
 - **Multiple Doors**: Every coop door on your account, each with its own settings
+- **Smart Feeders**: Open/closed status as a contact sensor, read-only
 - **Light Control**: Turn your coop light on and off (optional, requires Omlet Coop Light module)
 - **Real-time Status**: Automatic polling to keep door and light status up to date
 - **HomeKit Integration**: Full integration with Apple HomeKit scenes and automations
@@ -144,6 +145,24 @@ it go with it, and turning it back on creates a new tile with none of them back.
 If you are upgrading from an earlier version and have more than one door, only the
 door that was already set up is published. The others are listed as disabled, and the
 Homebridge log says so at startup — enable the ones you want in the plugin settings.
+
+### Feeders
+
+Omlet Smart Feeders on your account appear in HomeKit as a contact sensor, showing
+whether the feeder is open or closed and reporting any fault.
+
+They are read-only. The Omlet app opens and closes a feeder on a schedule or a light
+threshold and offers no way to open one on demand, so the plugin does not offer one
+either.
+
+A feeder reports two percentages — its battery level and its feed level — and Apple
+Home shows one battery per accessory. The battery shows the real battery level by
+default. A per-device setting switches it to feed level, which turns the low-battery
+warning into a "time to refill" alert, at the cost of the real batteries no longer
+warning you about anything.
+
+A feeder checks in with Omlet about once an hour, so its state updates far less often
+than a door's.
 
 ## Usage
 

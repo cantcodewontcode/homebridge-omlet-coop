@@ -1389,7 +1389,7 @@ function togglePasswordVisibility() {
   // each field the same way: a per-device entry if there is one, the plugin-level
   // setting if not.
   
-  const DEVICE_FIELDS = ['enableLight', 'enableBattery', 'enableLightSensor'];
+  const DEVICE_FIELDS = ['enableLight', 'enableBattery', 'enableLightSensor', 'feederBatteryShows'];
   let deviceEntries = Array.isArray(currentConfig.devices)
     ? JSON.parse(JSON.stringify(currentConfig.devices))
     : [];
@@ -1458,8 +1458,16 @@ function togglePasswordVisibility() {
       .replace(/"/g, '&quot;');
   }
   
+  function isFeeder(device) {
+    return /feeder/i.test(device.type || '');
+  }
+  
   function describeType(type) {
-    return /autodoor/i.test(type || '') ? 'Door' : (type || 'Unknown');
+    if (/autodoor/i.test(type || '')) {
+      return 'Door';
+    }
+    
+    return /feeder/i.test(type || '') ? 'Feeder' : (type || 'Unknown');
   }
   
   // Deliberately does not re-render. Rebuilding the list would collapse the panel
@@ -1530,18 +1538,22 @@ function togglePasswordVisibility() {
       const light = entry.enableLight === undefined ? '' : entry.enableLight;
       const battery = entry.enableBattery === undefined ? '' : entry.enableBattery;
       const sensor = entry.enableLightSensor;
+      const feederShows = entry.feederBatteryShows === 'feed' ? 'feed' : 'battery';
       
-      item.innerHTML = `
-        <div class="device-head" data-role="toggle">
-          <div class="device-title">
-            <h4>${escapeHtml(device.name)}</h4>
-            <p>${escapeHtml(describeType(device.type))}${device.serial ? ' &middot; ' + escapeHtml(device.serial) : ''}</p>
+      // A feeder has none of the door's options. It has one of its own: HomeKit
+      // shows a single battery per accessory, and a feeder reports two percentages.
+      const options = isFeeder(device) ? `
+          <div class="form-group">
+            <label>Battery shows</label>
+            <select class="form-control" data-role="feederBatteryShows">
+              <option value="battery"${feederShows === 'battery' ? ' selected' : ''}>Battery level</option>
+              <option value="feed"${feederShows === 'feed' ? ' selected' : ''}>Feed level</option>
+            </select>
+            <small class="form-text text-muted">
+              A feeder reports both, and Apple Home shows one battery per accessory. Showing feed level means the low-battery warning tells you to refill, and the real batteries stop warning you about anything.
+            </small>
           </div>
-          <span class="device-badge ${badge.className}">${badge.text}</span>
-          <span class="device-caret">&#9654;</span>
-        </div>
-        <div class="device-settings hidden">
-          ${detected.length ? `<p style="margin-bottom: 12px;">${detected.join('<br>')}</p>` : ''}
+      ` : `
           <div class="form-group">
             <label>Coop light accessory</label>
             <select class="form-control" data-role="enableLight">
@@ -1567,6 +1579,20 @@ function togglePasswordVisibility() {
               <option value="false"${sensor === false ? ' selected' : ''}>Do not show</option>
             </select>
           </div>
+      `;
+      
+      item.innerHTML = `
+        <div class="device-head" data-role="toggle">
+          <div class="device-title">
+            <h4>${escapeHtml(device.name)}</h4>
+            <p>${escapeHtml(describeType(device.type))}${device.serial ? ' &middot; ' + escapeHtml(device.serial) : ''}</p>
+          </div>
+          <span class="device-badge ${badge.className}">${badge.text}</span>
+          <span class="device-caret">&#9654;</span>
+        </div>
+        <div class="device-settings hidden">
+          ${detected.length ? `<p style="margin-bottom: 12px;">${detected.join('<br>')}</p>` : ''}
+          ${options}
           <div class="form-group" style="margin-bottom: 0;">
             <label>
               <input type="checkbox" data-role="enabled"${disabled ? ' checked' : ''}> Disable this device
@@ -1604,11 +1630,20 @@ function togglePasswordVisibility() {
       // The name is deliberately not editable. It is inherited from the Omlet app,
       // and HomeKit owns the accessory's name once the tile exists - writing it back
       // would not rename anything the user can see.
-      ['enableLight', 'enableBattery'].forEach((field) => {
-        panel.querySelector(`[data-role="${field}"]`).addEventListener('change', async (event) => {
+      // A door has three selects and a feeder has one, so bind whichever are there.
+      ['enableLight', 'enableBattery', 'feederBatteryShows'].forEach((field) => {
+        const control = panel.querySelector(`[data-role="${field}"]`);
+        
+        if (!control) {
+          return;
+        }
+        
+        control.addEventListener('change', async (event) => {
           const target = entryFor(device);
           
-          if (event.target.value === '') {
+          // "Battery level" is the feeder default, so storing it would mark the
+          // device as customized for choosing what it already does.
+          if (event.target.value === '' || (field === 'feederBatteryShows' && event.target.value === 'battery')) {
             delete target[field];
           } else {
             target[field] = event.target.value;
@@ -1618,17 +1653,21 @@ function togglePasswordVisibility() {
         });
       });
       
-      panel.querySelector('[data-role="enableLightSensor"]').addEventListener('change', async (event) => {
-        const target = entryFor(device);
-        
-        if (event.target.value === '') {
-          delete target.enableLightSensor;
-        } else {
-          target.enableLightSensor = event.target.value === 'true';
-        }
-        
-        await saveDeviceEntries(item, device);
-      });
+      const sensorControl = panel.querySelector('[data-role="enableLightSensor"]');
+      
+      if (sensorControl) {
+        sensorControl.addEventListener('change', async (event) => {
+          const target = entryFor(device);
+          
+          if (event.target.value === '') {
+            delete target.enableLightSensor;
+          } else {
+            target.enableLightSensor = event.target.value === 'true';
+          }
+          
+          await saveDeviceEntries(item, device);
+        });
+      }
       
       panel.querySelector('[data-role="enabled"]').addEventListener('change', async (event) => {
         const target = entryFor(device);

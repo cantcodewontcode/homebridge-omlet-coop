@@ -1175,12 +1175,12 @@ class OmletCoopPlatform {
     // Dispatch on the state sections a device reports, not on deviceType: the SDK
     // types that as a bare string with no enumeration, so the shape is the reliable
     // signal and the type string is only a hint.
-    const doors = devices.filter(device => device.deviceId && device.isDoor);
+    const doors = devices.filter(device => device.deviceId && (device.isDoor || device.isFeeder));
     const skipped = devices.length - doors.length;
     
     if (skipped > 0 && !this.skippedLogged) {
       this.skippedLogged = true;
-      this.log.info(`Ignoring ${skipped} device(s) that are not coop doors`);
+      this.log.info(`Ignoring ${skipped} device(s) that are neither a coop door nor a feeder`);
     }
     
     // An empty list is indistinguishable from an Omlet-side glitch, so it is never
@@ -1207,8 +1207,11 @@ class OmletCoopPlatform {
           deviceId: item.context.deviceId,
           serial: item.context.deviceSerial || null,
           name: item.displayName,
-          type: 'Autodoor',
-          isDoor: true
+          // What kind of device this was is remembered on the accessory, so a
+          // feeder does not come back from an outage as a garage door.
+          type: item.context.deviceKind === 'feeder' ? 'Feeder' : 'Autodoor',
+          isDoor: item.context.deviceKind !== 'feeder',
+          isFeeder: item.context.deviceKind === 'feeder'
         }));
     }
     
@@ -1322,7 +1325,11 @@ class OmletCoopPlatform {
         : this.normalizeTriState(entry.enableBattery, 'enableBattery'),
       enableLightSensor: entry.enableLightSensor === undefined
         ? this.enableLightSensor
-        : entry.enableLightSensor === true
+        : entry.enableLightSensor === true,
+      // Feeders only. A feeder reports two percentages and HomeKit shows one
+      // battery per accessory, so the user picks which one it means. Anything
+      // other than an explicit "feed" leaves it as the real battery.
+      feederBatteryShows: entry.feederBatteryShows === 'feed' ? 'feed' : 'battery'
     };
   }
   
@@ -1464,6 +1471,7 @@ class OmletCoopPlatform {
         accessory = new this.api.platformAccessory(device.name, this.api.hap.uuid.generate('omlet-coop-' + device.deviceId));
         accessory.context.deviceId = device.deviceId;
         accessory.context.deviceSerial = device.serial || undefined;
+        accessory.context.deviceKind = device.isFeeder ? 'feeder' : 'door';
         this.api.registerPlatformAccessories('homebridge-omlet', 'OmletCoop', [accessory]);
         
         // configureAccessory only runs for accessories restored from cache, so
@@ -1481,7 +1489,13 @@ class OmletCoopPlatform {
       
       claimed.add(accessory);
       this.missingSince.delete(accessory.UUID);
-      this.handlers.set(device.deviceId, new OmletCoopAccessory(this, accessory, device));
+      
+      // Dispatch on the state sections the device reports, not on deviceType: the
+      // SDK types that as a bare string with no enumeration.
+      const Handler = device.isFeeder ? FeederAccessory : OmletCoopAccessory;
+      
+      accessory.context.deviceKind = device.isFeeder ? 'feeder' : 'door';
+      this.handlers.set(device.deviceId, new Handler(this, accessory, device));
     });
     
     if (authoritative) {
@@ -1668,9 +1682,12 @@ class OmletCoopPlatform {
   }
 }
 
-// Combined accessory with linked services
-class OmletCoopAccessory {
-  constructor(platform, accessory, device) {
+// What every device has in common: an identity that can move between registrations,
+// a settings lookup, and a teardown. Deliberately small - the door's state machine
+// and the feeder's readout have almost nothing else in common, and pretending
+// otherwise is what makes base classes a liability.
+class OmletDevice {
+  constructor(platform, accessory, device, model) {
     this.platform = platform;
     this.accessory = accessory;
     this.log = platform.log;
@@ -1679,34 +1696,315 @@ class OmletCoopAccessory {
     this.deviceId = this.device.deviceId;
     this.name = this.device.name || accessory.displayName;
     this.baseUrl = platform.baseUrl;
+    this.debug = platform.debug;
     
     // Resolved per device, falling back to the plugin-level settings. Re-read on
     // retarget, because a serial learned later can bring overrides with it.
     this.settings = platform.deviceSettings(this.device);
-    this.pollInterval = platform.pollInterval;
-
-    this.debug = platform.debug;
     
     this.accessoryInfoUpdated = false;
     this.cachedStatus = null;
+    this.destroyed = false;
+    
+    // serial and firmware get updated after the first successful poll
+    this.accessory.getService(hap.Service.AccessoryInformation)
+      .setCharacteristic(hap.Characteristic.Manufacturer, 'Omlet')
+      .setCharacteristic(hap.Characteristic.Model, model)
+      .setCharacteristic(hap.Characteristic.SerialNumber, this.deviceId)
+      .setCharacteristic(hap.Characteristic.FirmwareRevision, '0.0.0');
+  }
+  
+  // Discovery saw this device again. The name can change in the Omlet app; the
+  // HomeKit accessory keeps whatever the user called it, so only our own label moves.
+  noteSeen(device) {
+    this.device = device;
+    this.name = device.name || this.name;
+    
+    if (device.serial && this.accessory.context.deviceSerial !== device.serial) {
+      this.accessory.context.deviceSerial = device.serial;
+      this.platform.api.updatePlatformAccessories([this.accessory]);
+    }
+  }
+  
+  // Point this handler at a new registration of the same hardware: update what we
+  // poll, what the accessory remembers, and the platform's handler key, which is the
+  // old device ID until we move it.
+  retarget(device) {
+    const previous = this.deviceId;
+    
+    this.deviceId = device.deviceId;
+    this.device = device;
+    this.name = device.name || this.name;
+    this.accessoryInfoUpdated = false;
+    this.settings = this.platform.deviceSettings(device);
+    
+    this.accessory.context.deviceId = device.deviceId;
+    
+    if (device.serial) {
+      this.accessory.context.deviceSerial = device.serial;
+    }
+    
+    this.platform.api.updatePlatformAccessories([this.accessory]);
+    
+    if (this.platform.handlers.get(previous) === this) {
+      this.platform.handlers.delete(previous);
+    }
+    
+    this.platform.handlers.set(device.deviceId, this);
+  }
+  
+  destroy() {
+    this.destroyed = true;
+  }
+  
+  // Only a door moves. The platform asks every handler, so the quiet answer has to
+  // be here rather than guarded at each call site.
+  isTransitioning() {
+    return false;
+  }
+  
+  reportStuck() {}
+  
+  async recoverStuck() {
+    return false;
+  }
+}
+
+// A Smart Feeder. Read-only, deliberately: the Omlet app opens and closes a feeder
+// on a schedule or a light threshold and offers no "open now", so neither do we. The
+// API does advertise open/close actions on the same endpoint the doors use - they
+// are simply not something a user is given.
+//
+// One accessory, one tile. A ContactSensor for the hatch, and a single Battery
+// service. HomeKit renders one battery per accessory, and a feeder reports two
+// percentages - its cells and its feed - so the user chooses which one that battery
+// means. Default is the real battery; feed level is an opt-in override, with the
+// trade spelled out in the settings page.
+//
+// Everything else a feeder reports is deliberately not published. See
+// docs/FEEDER-DESIGN.md: remainingDays has no HomeKit equivalent, and the
+// alternatives for feed level - a humidity sensor, a light sensor, a second battery -
+// were probed against the Home app and are each a lie about a different quantity.
+class FeederAccessory extends OmletDevice {
+  constructor(platform, accessory, device) {
+    super(platform, accessory, device, 'Smart Feeder');
+    
+    this.lastFault = null;
+    
+    this.contactService = this.accessory.getService(hap.Service.ContactSensor)
+      || this.accessory.addService(hap.Service.ContactSensor);
+    
+    this.contactService.setCharacteristic(hap.Characteristic.Name, 'Feeder');
+    this.contactService.setPrimaryService(true);
+    
+    this.contactService
+      .getCharacteristic(hap.Characteristic.ContactSensorState)
+      .onGet(this.getContactState.bind(this));
+    
+    this.contactService
+      .getCharacteristic(hap.Characteristic.StatusFault)
+      .onGet(this.getStatusFault.bind(this));
+    
+    this.applyBatteryService();
+    
+    this.log.info(`Feeder accessory initialized (battery shows: ${this.showsFeedLevel() ? 'feed level' : 'battery level'})`);
+  }
+  
+  // The override. Off by default: a battery reading that is not a battery is
+  // confusing, and only worth it to someone who would rather be told to refill.
+  showsFeedLevel() {
+    return this.settings.feederBatteryShows === 'feed';
+  }
+  
+  applyBatteryService() {
+    const service = this.accessory.getService(hap.Service.Battery)
+      || this.accessory.addService(hap.Service.Battery);
+    
+    service.setCharacteristic(hap.Characteristic.Name,
+      this.showsFeedLevel() ? 'Feed Level' : 'Battery');
+    service
+      .getCharacteristic(hap.Characteristic.BatteryLevel)
+      .onGet(this.getBatteryLevel.bind(this));
+    service
+      .getCharacteristic(hap.Characteristic.ChargingState)
+      .setValue(2); // NOT_CHARGEABLE
+    service
+      .getCharacteristic(hap.Characteristic.StatusLowBattery)
+      .onGet(this.getStatusLowBattery.bind(this));
+    
+    this.contactService.addLinkedService(service);
+    this.batteryService = service;
+  }
+  
+  // "Closed" is contact detected, matching a door sensor: the hatch is shut.
+  getContactState() {
+    const state = this.cachedStatus?.state?.feeder?.state;
+    
+    if (state === undefined || state === null) {
+      throw unavailable();
+    }
+    
+    return state === 'open'
+      ? hap.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED
+      : hap.Characteristic.ContactSensorState.CONTACT_DETECTED;
+  }
+  
+  getStatusFault() {
+    const fault = this.cachedStatus?.state?.feeder?.fault;
+    
+    return (fault && fault !== 'none')
+      ? hap.Characteristic.StatusFault.GENERAL_FAULT
+      : hap.Characteristic.StatusFault.NO_FAULT;
+  }
+  
+  // Whichever percentage the user asked for. Both are real readings about this
+  // device; only one of them can be shown.
+  level(status = this.cachedStatus) {
+    const raw = this.showsFeedLevel()
+      ? status?.state?.feeder?.feedLevel
+      : status?.state?.general?.batteryLevel;
+    
+    if (raw === undefined || raw === null || raw === '') {
+      return null;
+    }
+    
+    const value = Number(raw);
+    
+    return Number.isFinite(value) ? Math.min(100, Math.max(0, value)) : null;
+  }
+  
+  async getBatteryLevel() {
+    const value = this.level();
+    
+    if (value === null) {
+      throw unavailable();
+    }
+    
+    return value;
+  }
+  
+  // HomeKit warns below 20% on its own. In feed mode that warning is the point -
+  // it arrives as "low battery" and means "refill" - and it is also the cost, since
+  // the real cells then warn about nothing.
+  async getStatusLowBattery() {
+    const value = this.level();
+    
+    if (value === null) {
+      throw unavailable();
+    }
+    
+    return value < 20 ? 1 : 0;
+  }
+  
+  async acceptStatus(device) {
+    this.device = device;
+    this.name = device.name || this.name;
+    
+    const status = device.status || device;
+    
+    this.cachedStatus = status;
+    this.updateAccessoryInfo(status);
+    this.reportFault(status);
+    this.pushToHomeKit(status);
+  }
+  
+  updateAccessoryInfo(status) {
+    if (this.accessoryInfoUpdated) {
+      return;
+    }
+    
+    const serial = status.deviceSerial || this.deviceId;
+    const firmware = status.state?.general?.firmwareVersionCurrent || '0.0.0';
+    
+    if (status.deviceSerial && this.accessory.context.deviceSerial !== status.deviceSerial) {
+      this.accessory.context.deviceSerial = status.deviceSerial;
+      this.platform.api.updatePlatformAccessories([this.accessory]);
+    }
+    
+    this.accessory.getService(hap.Service.AccessoryInformation)
+      .setCharacteristic(hap.Characteristic.SerialNumber, serial)
+      .setCharacteristic(hap.Characteristic.FirmwareRevision, firmware);
+    
+    this.accessoryInfoUpdated = true;
+  }
+  
+  // Said once per change rather than once per poll. A feeder checks in hourly, so a
+  // fault repeated every cycle would be the loudest thing in the log.
+  reportFault(status) {
+    const fault = status.state?.feeder?.fault || 'none';
+    
+    if (fault === this.lastFault) {
+      return;
+    }
+    
+    this.lastFault = fault;
+    
+    if (fault !== 'none') {
+      this.log.warn(`${this.name}: feeder reports a fault (${fault})`);
+    } else if (this.accessoryInfoUpdated) {
+      this.log.info(`${this.name}: feeder fault cleared`);
+    }
+  }
+  
+  pushToHomeKit(status) {
+    try {
+      const state = status.state?.feeder?.state;
+      
+      if (state !== undefined && state !== null) {
+        this.contactService
+          .getCharacteristic(hap.Characteristic.ContactSensorState)
+          .updateValue(state === 'open'
+            ? hap.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED
+            : hap.Characteristic.ContactSensorState.CONTACT_DETECTED);
+      }
+      
+      this.contactService
+        .getCharacteristic(hap.Characteristic.StatusFault)
+        .updateValue(this.getStatusFault());
+      
+      const value = this.level(status);
+      
+      if (this.batteryService && value !== null) {
+        this.batteryService
+          .getCharacteristic(hap.Characteristic.BatteryLevel)
+          .updateValue(value);
+        this.batteryService
+          .getCharacteristic(hap.Characteristic.StatusLowBattery)
+          .updateValue(value < 20 ? 1 : 0);
+      }
+      
+      if (this.debug) {
+        this.log.info(`[Poll] ${this.name}: feeder ${state}, ${this.showsFeedLevel() ? 'feed' : 'battery'} ${value}%`);
+      }
+    } catch (error) {
+      this.log.error('[Poll] Failed to push feeder state to HomeKit:', error.message);
+    }
+  }
+  
+  // The settings page can switch which percentage the battery reports, and that
+  // changes the service name as well as the value.
+  retarget(device) {
+    super.retarget(device);
+    this.applyBatteryService();
+  }
+}
+
+// Combined accessory with linked services
+class OmletCoopAccessory extends OmletDevice {
+  constructor(platform, accessory, device) {
+    super(platform, accessory, device, 'Smart Autodoor');
+    
+    this.pollInterval = platform.pollInterval;
     this.pollTimer = null;
     this.pollGeneration = 0;
     this.fastPollCount = 0;
     this.pendingServiceChange = { light: null, battery: null, lightSensor: null };
     this.firstReconcileDone = false;
     this.lastFault = null;
-    this.destroyed = false;
     this.recoveryAttempted = { door: false, light: false };
     this.intents = { door: null, light: null };
     this.reapply = { door: null, light: null };
     this.batteryOverrideRefused = false;
-    
-    // serial and firmware get updated after the first successful poll
-    this.accessory.getService(hap.Service.AccessoryInformation)
-      .setCharacteristic(hap.Characteristic.Manufacturer, 'Omlet')
-      .setCharacteristic(hap.Characteristic.Model, 'Smart Autodoor')
-      .setCharacteristic(hap.Characteristic.SerialNumber, this.deviceId)
-      .setCharacteristic(hap.Characteristic.FirmwareRevision, '0.0.0');
     
     this.doorService = this.accessory.getService(hap.Service.GarageDoorOpener) 
       || this.accessory.addService(hap.Service.GarageDoorOpener);
@@ -2665,49 +2963,11 @@ class OmletCoopAccessory {
     }
   }
 
-  // Point this accessory at a new registration of the same hardware: update what we
-  // poll, what the accessory remembers, and the platform's handler key, which is the
-  // old device ID until we move it.
-  retarget(device) {
-    const previous = this.deviceId;
-    
-    this.deviceId = device.deviceId;
-    this.device = device;
-    this.name = device.name || this.name;
-    this.accessoryInfoUpdated = false;
-    this.settings = this.platform.deviceSettings(device);
-    
-    this.accessory.context.deviceId = device.deviceId;
-    
-    if (device.serial) {
-      this.accessory.context.deviceSerial = device.serial;
-    }
-    
-    this.platform.api.updatePlatformAccessories([this.accessory]);
-    
-    if (this.platform.handlers.get(previous) === this) {
-      this.platform.handlers.delete(previous);
-    }
-    
-    this.platform.handlers.set(device.deviceId, this);
-  }
-  
-  // Discovery saw this device again. The name can change in the Omlet app; the
-  // HomeKit accessory keeps whatever the user called it, so only our own label moves.
-  noteSeen(device) {
-    this.device = device;
-    this.name = device.name || this.name;
-    
-    if (device.serial && this.accessory.context.deviceSerial !== device.serial) {
-      this.accessory.context.deviceSerial = device.serial;
-      this.platform.api.updatePlatformAccessories([this.accessory]);
-    }
-  }
   
   // Bumping the generation is what stops a poll that is already in flight from
   // scheduling a successor once it finishes - clearing the timer alone would not.
   destroy() {
-    this.destroyed = true;
+    super.destroy();
     this.pollGeneration++;
     this.stopPolling();
   }

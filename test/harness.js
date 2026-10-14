@@ -256,6 +256,10 @@ class FakeCharacteristic {
   onGet(fn) { this.getter = fn; return this; }
   onSet(fn) { this.setter = fn; return this; }
   updateValue(value) { this.value = value; return this; }
+  // Real HAP has both. The plugin uses setValue for fixed characteristics like
+  // ChargingState; nothing reached it until feeders, because a mains-powered door
+  // never builds a battery service.
+  setValue(value) { this.value = value; return this; }
   setProps() { return this; }
   async read() { return this.getter ? this.getter() : this.value; }
   async write(value) { if (this.setter) { await this.setter(value); } this.value = value; }
@@ -302,7 +306,8 @@ const hap = {
     GarageDoorOpener: serviceClass('GarageDoorOpener'),
     Lightbulb: serviceClass('Lightbulb'),
     Battery: serviceClass('Battery'),
-    LightSensor: serviceClass('LightSensor')
+    LightSensor: serviceClass('LightSensor'),
+    ContactSensor: serviceClass('ContactSensor')
   },
   Characteristic: {
     Name: characteristicClass('Name'),
@@ -318,7 +323,10 @@ const hap = {
     BatteryLevel: characteristicClass('BatteryLevel'),
     StatusLowBattery: characteristicClass('StatusLowBattery'),
     ChargingState: characteristicClass('ChargingState', { NOT_CHARGEABLE: 2 }),
-    CurrentAmbientLightLevel: characteristicClass('CurrentAmbientLightLevel')
+    CurrentAmbientLightLevel: characteristicClass('CurrentAmbientLightLevel'),
+    ContactSensorState: characteristicClass('ContactSensorState',
+      { CONTACT_DETECTED: 0, CONTACT_NOT_DETECTED: 1 }),
+    StatusFault: characteristicClass('StatusFault', { NO_FAULT: 0, GENERAL_FAULT: 1 })
   },
   HAPStatus: { SERVICE_COMMUNICATION_FAILURE: -70402 },
   HapStatusError: class HapStatusError extends Error {

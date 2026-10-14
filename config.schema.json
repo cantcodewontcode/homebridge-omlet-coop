@@ -214,6 +214,26 @@
             "enableLightSensor": {
               "title": "Light Level Sensor",
               "type": "boolean"
+            },
+            "feederBatteryShows": {
+              "title": "Feeder Battery Shows",
+              "type": "string",
+              "default": "battery",
+              "oneOf": [
+                {
+                  "title": "Battery level",
+                  "enum": [
+                    "battery"
+                  ]
+                },
+                {
+                  "title": "Feed level",
+                  "enum": [
+                    "feed"
+                  ]
+                }
+              ],
+              "description": "Feeders only. A feeder reports both a battery level and a feed level, and HomeKit shows one battery per accessory. Showing feed level means the low-battery warning tells you to refill, and the real batteries no longer warn you about anything."
             }
           }
         }
@@ -252,7 +272,8 @@
         "devices[].enabled",
         "devices[].enableLight",
         "devices[].enableBattery",
-        "devices[].enableLightSensor"
+        "devices[].enableLightSensor",
+        "devices[].feederBatteryShows"
       ]
     }
   ]
