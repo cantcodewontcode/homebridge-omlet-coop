@@ -1,36 +1,36 @@
 # Changelog
 
-## [Unreleased]
+## [0.9.10-beta.1] - 2026-10-14
 
-### Multiple Doors
-- Every coop door on your Omlet account is now published to HomeKit, not just the first one. (Requested by @stevendark-TSD, #6)
-- Each door gets its own settings in the plugin settings page: coop light accessory, battery status, light level sensor, and whether to publish the door at all. Anything left alone follows the plugin-wide setting.
-- Disabling a door removes it from HomeKit entirely. Re-enabling it later brings it back as a new device, so any automations using it have to be set up again. The settings page says so where the toggle is.
-- Upgrading from an earlier version with more than one door on the account publishes only the door that was already set up. The others are listed as disabled, with a log line saying where to enable them.
+**Beta.** New multi-door capabilities have been added, but have had limited testing on real-world multi-door setups. Please report anything odd at [the issue tracker](https://github.com/cantcodewontcode/homebridge-omlet-coop/issues), and use **Capture device payload** in your plugin's advanced settings to attach what your account actually returns.
+
+### Door Enhancements
+- Added support for multiple Omlet coop doors. (Requested by @stevendark-TSD, #6)
+- Adjust settings per-door for things like the coop light, battery status, and light level sensor.
+- Devices now match based on their hardware serial, so a door keeps its HomeKit accessory and its settings through a factory reset with no risk of a mismatch.
+- Disable a door to hide it from HomeKit. (Later re-enabling of a door brings it back as a brand-new device.)
+- If you upgrade from 0.9.9 or earlier and have multiple doors, only the previously setup door will be automatically available. The other doors will be discovered by the plugin and automatically disabled, to prevent an upgrade from unexpectedly changing behavior. Enable them with Plugin Config.
 - A door added to your account appears in HomeKit on the next poll, without a restart.
-- Devices are matched on their hardware serial, so per-device settings survive a factory reset.
-
-### Settings
-- The settings page lists every device on the account, with its type and serial, instead of naming only the first one.
-- Added a Re-authenticate button. Signing in again no longer means using Disconnect, which resets everything else along with the credentials.
-- Added "Remove accessories not seen for (hours)" to advanced settings: how long a device may be missing from your account before its accessory is removed. Default 24, 0 never removes one.
-- Removed the Device ID field. Every device is published now, so pinning one to the plugin no longer means anything. An existing value is still read.
-- Added "Capture device payload" to advanced settings. Fetches one response from Omlet and shows it ready to paste into a bug report, with serials, device names, email addresses and your wifi name replaced by placeholders. A tickbox includes them if you need to. Nothing is written to the log.
-- Power is described as "hardwired" rather than "mains".
-- Changing a device's setting no longer collapses its settings panel.
-
-### Accessories
-- Now supports Light Level Sensor, off by default. Omlet light reports values of 0-100. Apple Home will (incorrectly) label this as a lux reading, but it is still useful for triggering light-level automations.
-
-### Reliability
-- Coop accessories are now tracked by hardware serials, allowing for better accessory persistence, even when a factory reset is performed.
-- One request now covers every device on the account, so the number of requests no longer grows with the number of doors.
-- Startup no longer makes the same request twice. Discovery already returns each device's full state, so there is nothing for an immediate first poll to fetch.
 
 ### Security
-- Debug mode no longer writes your Omlet account password to the Homebridge log. Signing in with the account method logged the request body, which contains the email address and password in plain text. If you have signed in with debug enabled, change your Omlet password and clear your Homebridge logs.
-- Debug mode no longer logs any part of your API key. Two places printed the first 20 characters.
-- Debug mode no longer prints the full device payload on every settings page visit. It was printed twice over, raw and parsed, which buried everything else in the log. Use "Capture device payload" in advanced settings when you want one.
+- Debug mode no longer logs account passwords on initial plugin setup.
+- Debug mode no longer logs any part of your API key.
+- Debug mode no longer prints the full device payload when visiting plugin settings.
+
+### Settings
+- The settings page now lists every device on the account, with its type and serial.
+- Added a Re-authenticate option. Re-authenticating with this option preserves all existing settings.
+- The Disconnect button has been renamed to **Reset Plugin** and wipes all plugin configuration except for the most basic parameters (like the child bridge setting and plugin name).
+- Added **Capture device payload** to advanced settings. Fetches one response from Omlet and shows it ready to paste into a bug report. The payload replaces serials, device names, email addresses, and network names with placeholder values to protect privacy. Nothing is written to the log.
+- Added **Remove accessories not seen for (hours)** with a default setting of 24. If a device disappears from your setup momentarily, it will no longer be removed. This is useful when factory resetting a door, to ensure it retains its configuration when it comes back online.
+- Removed the Device ID field from settings, given that all doors are now discovered.
+
+### Accessories
+- Optionally expose the door's light sensor. This will show in Apple Home as a lux value, but it is actually an Omlet-proprietary value of 0-100. Useful for triggering light-based automations.
+
+### Reliability
+- One request covers every device on the account, reducing the impact on Omlet's servers.
+- Initial startup and discovery now use a single API call.
 
 ### Bug Fixes
 - A coop that cannot be found on the account is now reported once rather than on every poll.

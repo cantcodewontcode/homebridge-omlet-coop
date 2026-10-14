@@ -192,10 +192,7 @@
   <div id="connectedPanel" class="hidden">
     <div id="connectedDetails" style="padding: 15px; background: #f8f9fa; border-radius: 6px; margin-bottom: 15px;"></div>
     <button id="reauthButton" class="btn btn-primary">Re-authenticate</button>
-    <button id="disconnectButton" class="btn" style="background: #dc3545; color: #fff;">Disconnect</button>
-    <small class="form-text text-muted" style="margin-top: 8px;">
-      Re-authenticate signs in again and keeps everything else. Disconnect clears the stored credentials; your per-device settings are kept in case you sign back in.
-    </small>
+    <button id="disconnectButton" class="btn" style="background: #dc3545; color: #fff;">Reset Plugin</button>
     <div id="devicesSection">
       <h3 style="font-size: 15px; margin: 22px 0 0 0;">Devices</h3>
       <div id="deviceList" class="device-list"></div>
@@ -703,9 +700,9 @@ function togglePasswordVisibility() {
     }
   });
   
-  // Separate from Disconnect on purpose. Disconnect used to be the only route back to
-  // a login screen, so it got used for credential trouble, and everything it resets
-  // went with it as collateral.
+  // Separate from Reset Plugin on purpose. Resetting used to be the only route back
+  // to a login screen, so it got used for credential trouble, and everything it
+  // cleared went with it as collateral.
   document.getElementById('reauthButton').addEventListener('click', () => {
     document.getElementById('bearerToken').value = '';
     document.getElementById('password').value = '';
@@ -713,21 +710,58 @@ function togglePasswordVisibility() {
     showStatus('Sign in again below, then click Save. Nothing else is changed.', 'info');
   });
   
+  // window.confirm is unusable here: this page runs in a sandboxed iframe, where
+  // modal dialogs are ignored outright - the call returns false and the click
+  // silently does nothing. So the button confirms itself. It used to rely on being
+  // red, which was enough when it only signed you out and is not now.
+  let resetArmed = null;
+  
+  function disarmReset() {
+    const button = document.getElementById('disconnectButton');
+    
+    clearTimeout(resetArmed);
+    resetArmed = null;
+    button.textContent = 'Reset Plugin';
+  }
+  
   document.getElementById('disconnectButton').addEventListener('click', async () => {
     const button = document.getElementById('disconnectButton');
+    
+    if (!resetArmed) {
+      button.textContent = 'CLICK AGAIN TO ERASE ALL SETTINGS';
+      resetArmed = setTimeout(disarmReset, 6000);
+      return;
+    }
+    
+    clearTimeout(resetArmed);
+    resetArmed = null;
     button.disabled = true;
     
     try {
       await homebridge.request('/forget', {});
       
-      // Clear anything left in config too, so nothing can quietly reconnect.
-      const cleared = JSON.parse(JSON.stringify(currentConfig || {}));
-      delete cleared.bearerToken;
-      delete cleared.email;
-      delete cleared.password;
-      cleared.platform = 'OmletCoop';
-      await homebridge.updatePluginConfig([cleared]);
-      currentConfig = cleared;
+      // A full reset, not just a sign-out: every plugin setting goes, so people can
+      // start clean without uninstalling and reinstalling. Credential trouble is
+      // Re-authenticate's job. Done server-side because updatePluginConfig merges,
+      // and a merge cannot remove a key.
+      const result = await homebridge.request('/reset-plugin', {});
+      const refreshed = await homebridge.getPluginConfig();
+      
+      currentConfig = (refreshed && refreshed[0]) || { platform: 'OmletCoop', name: 'Omlet Coop' };
+      deviceEntries = [];
+      lastDiscovered = [];
+      expanded.clear();
+      
+      // Put the form back to its defaults, so the page matches the file.
+      document.getElementById('enableLight').value = 'auto';
+      document.getElementById('enableBattery').value = 'auto';
+      document.getElementById('enableLightSensor').checked = false;
+      document.getElementById('debugMode').checked = false;
+      document.getElementById('apiServer').value = '';
+      document.getElementById('pollInterval').value = '';
+      document.getElementById('removeAfterHours').value = '';
+      document.getElementById('countryCode').value = 'US';
+      document.getElementById('deviceList').innerHTML = '';
       
       // Reopen on whichever method they were using.
       const previous = (currentConfig.authMethod === 'account') ? 'account' : 'key';
@@ -741,12 +775,13 @@ function togglePasswordVisibility() {
       document.getElementById('password').value = '';
       
       showSetupView();
-      showStatus('Credentials removed. Set up again below, then click Save.', 'info');
+      showStatus('Plugin settings reset. Set up again below, then click Save.', 'info');
     } catch (error) {
       console.error('Forget failed:', error);
       showStatus('Could not remove the saved credentials: ' + error.message, 'error');
     } finally {
       button.disabled = false;
+      button.textContent = 'Reset Plugin';
     }
   });
   

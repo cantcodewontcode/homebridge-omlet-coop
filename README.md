@@ -71,6 +71,17 @@ Rarely needed:
 - **Debug Mode**: Enable detailed logging for troubleshooting
 - **Capture device payload**: Fetches one response from Omlet and shows it ready to paste into a bug report. Serials, device names, email addresses and your wifi name are replaced with placeholders unless you ask for them. Nothing is written to the log
 
+### Re-authenticate and Reset Plugin
+
+Once you are connected, the settings page offers two buttons.
+
+**Re-authenticate** signs you in again and keeps everything else. This is the one for
+an expired key or a password change.
+
+**Reset Plugin** clears your credentials and every setting, including per-device
+ones, so you can start clean without uninstalling and reinstalling the plugin. Your
+accessories are removed from HomeKit. The button asks you to click it twice.
+
 #### Light Level Sensor
 
 Omlet light sensor reports values of 0-100. Apple Home will (incorrectly) label this as a lux reading, but it is still useful for triggering light-level automations.

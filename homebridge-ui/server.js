@@ -75,6 +75,7 @@ class OmletPluginUiServer extends HomebridgePluginUiServer {
     this.onRequest('/forget', this.handleForget.bind(this));
     this.onRequest('/strip-credentials', this.handleStripCredentials.bind(this));
     this.onRequest('/capture-payload', this.handleCapturePayload.bind(this));
+    this.onRequest('/reset-plugin', this.handleResetPlugin.bind(this));
     
     this.ready();
   }
@@ -82,6 +83,64 @@ class OmletPluginUiServer extends HomebridgePluginUiServer {
   // Rewrites config.json directly. updatePluginConfig() could not be relied on to
   // REMOVE a key - omitting it from the staged block did not delete it - and a
   // credential left in config.json overrides the working one in storage.
+  // Disconnect is a full reset: wipe the plugin's settings without having to
+  // uninstall and reinstall. Credential trouble is Re-authenticate's job, and an
+  // expired session already returns to the sign-in form on its own, so nothing
+  // reaches this except a deliberate click.
+  //
+  // It edits config.json directly because updatePluginConfig merges - omitting a
+  // key leaves the old value in place, which is the opposite of a reset.
+  async handleResetPlugin() {
+    const configPath = this.homebridgeConfigPath;
+    
+    if (!configPath) {
+      throw new RequestError('Homebridge config path is unavailable', { status: 500 });
+    }
+    
+    try {
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      
+      if (!Array.isArray(config.platforms)) {
+        return { success: true, cleared: [] };
+      }
+      
+      const cleared = [];
+      
+      config.platforms.forEach((block, index) => {
+        if (!block || block.platform !== 'OmletCoop') {
+          return;
+        }
+        
+        const kept = { platform: 'OmletCoop', name: block.name || 'Omlet Coop' };
+        
+        Object.keys(block).forEach((key) => {
+          // Homebridge owns anything underscore-prefixed. _bridge carries the child
+          // bridge's identity, and dropping it would unpair every accessory from
+          // HomeKit - which is well beyond resetting the plugin's settings.
+          if (key.startsWith('_')) {
+            kept[key] = block[key];
+            return;
+          }
+          
+          if (key !== 'platform' && key !== 'name') {
+            cleared.push(key);
+          }
+        });
+        
+        config.platforms[index] = kept;
+      });
+      
+      const tmpPath = `${configPath}.omlet-tmp`;
+      
+      fs.writeFileSync(tmpPath, JSON.stringify(config, null, 4));
+      fs.renameSync(tmpPath, configPath);
+      
+      return { success: true, cleared: cleared };
+    } catch (error) {
+      throw new RequestError(`Failed to reset the plugin settings: ${error.message}`, { status: 500 });
+    }
+  }
+  
   async handleStripCredentials() {
     const configPath = this.homebridgeConfigPath;
     
