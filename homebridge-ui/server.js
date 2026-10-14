@@ -379,12 +379,10 @@ class OmletPluginUiServer extends HomebridgePluginUiServer {
       };
       
       if (debug) {
-        console.log('=== OMLET LOGIN REQUEST ===');
-        console.log('URL:', `https://${options.hostname}${options.path}`);
-        console.log('Method:', options.method);
-        console.log('Headers:', JSON.stringify(options.headers, null, 2));
-        console.log('Body:', postData);
-        console.log('===========================');
+        // Never the body: it is the account email address and password in plain
+        // text, and the Homebridge log is the first thing people paste into a bug
+        // report. Never the headers either, for the same reason.
+        console.log(`[Omlet] POST https://${options.hostname}${options.path} (credentials withheld)`);
       }
       
       const req = https.request(options, (res) => {
@@ -395,21 +393,15 @@ class OmletPluginUiServer extends HomebridgePluginUiServer {
         });
         
         res.on('end', () => {
+          // The login response body is where the issued API key arrives, so it is
+          // never printed - not raw, not parsed.
           if (debug) {
-            console.log('Response Body:', data);
-            console.log('Body Length:', data.length, 'bytes');
-            console.log('============================');
+            console.log(`[Omlet] Login response: HTTP ${res.statusCode}, ${data.length} bytes`);
           }
           
           if (res.statusCode === 200) {
             try {
               const response = JSON.parse(data);
-              
-              if (debug) {
-                console.log('=== PARSED JSON ===');
-                console.log(JSON.stringify(response, null, 2));
-                console.log('===================');
-              }
               
               const token = response.data?.api_key || 
                            response.data?.apiKey || 
@@ -420,7 +412,7 @@ class OmletPluginUiServer extends HomebridgePluginUiServer {
               
               if (token) {
                 if (debug) {
-                  console.log('✓ Token extracted:', token.substring(0, 20) + '...');
+                  console.log('[Omlet] API key received and will be saved to storage');
                 }
                 resolve(token);
               } else {
@@ -473,14 +465,8 @@ class OmletPluginUiServer extends HomebridgePluginUiServer {
       };
       
       if (debug) {
-        console.log('=== OMLET DISCOVERY REQUEST ===');
-        console.log('URL:', `https://${options.hostname}${options.path}`);
-        console.log('Method:', options.method);
-        console.log('Headers:', JSON.stringify({
-          ...options.headers,
-          'Authorization': 'Bearer ' + token.substring(0, 20) + '...'
-        }, null, 2));
-        console.log('===============================');
+        // A 20-character prefix of an API key is still part of an API key.
+        console.log(`[Omlet] GET https://${options.hostname}${options.path}`);
       }
       
       const req = https.request(options, (res) => {
@@ -491,21 +477,17 @@ class OmletPluginUiServer extends HomebridgePluginUiServer {
         });
         
         res.on('end', () => {
+          // Deliberately not the payload. It was printed twice over, raw and
+          // parsed, every time the settings page opened - which buried everything
+          // else in the log. "Capture device payload" in advanced settings is the
+          // way to get one on purpose.
           if (debug) {
-            console.log('Response Body:', data);
-            console.log('Body Length:', data.length, 'bytes');
-            console.log('================================');
+            console.log(`[Omlet] Discovery response: HTTP ${res.statusCode}, ${data.length} bytes`);
           }
           
           if (res.statusCode === 200) {
             try {
               const response = JSON.parse(data);
-              
-              if (debug) {
-                console.log('=== PARSED JSON ===');
-                console.log(JSON.stringify(response, null, 2));
-                console.log('===================');
-              }
               
               // Check if response is directly an array OR has a data property with an array
               const devicesArray = Array.isArray(response) ? response : 

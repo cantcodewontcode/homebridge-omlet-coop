@@ -27,6 +27,11 @@
 - One request now covers every device on the account, so the number of requests no longer grows with the number of doors.
 - Startup no longer makes the same request twice. Discovery already returns each device's full state, so there is nothing for an immediate first poll to fetch.
 
+### Security
+- Debug mode no longer writes your Omlet account password to the Homebridge log. Signing in with the account method logged the request body, which contains the email address and password in plain text. If you have signed in with debug enabled, change your Omlet password and clear your Homebridge logs.
+- Debug mode no longer logs any part of your API key. Two places printed the first 20 characters.
+- Debug mode no longer prints the full device payload on every settings page visit. It was printed twice over, raw and parsed, which buried everything else in the log. Use "Capture device payload" in advanced settings when you want one.
+
 ### Bug Fixes
 - A coop that cannot be found on the account is now reported once rather than on every poll.
 
