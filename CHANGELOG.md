@@ -5,7 +5,7 @@
 ### Multiple Doors
 - Every coop door on your Omlet account is now published to HomeKit, not just the first one. (Requested by @stevendark-TSD, #6)
 - Each door gets its own settings in the plugin settings page: coop light accessory, battery status, light level sensor, and whether to publish the door at all. Anything left alone follows the plugin-wide setting.
-- Disabling a door removes it from HomeKit. Its room, its name and any automations using it go with it, and re-enabling it creates a new tile with none of them back. The settings page says so where the toggle is.
+- Disabling a door removes it from HomeKit entirely. Re-enabling it later brings it back as a new device, so any automations using it have to be set up again. The settings page says so where the toggle is.
 - Upgrading from an earlier version with more than one door on the account publishes only the door that was already set up. The others are listed as disabled, with a log line saying where to enable them.
 - A door added to your account appears in HomeKit on the next poll, without a restart.
 - Devices are matched on their hardware serial, so per-device settings survive a factory reset.
@@ -15,6 +15,8 @@
 - Added a Re-authenticate button. Signing in again no longer means using Disconnect, which resets everything else along with the credentials.
 - Added "Remove accessories not seen for (hours)" to advanced settings: how long a device may be missing from your account before its accessory is removed. Default 24, 0 never removes one.
 - Removed the Device ID field. Every device is published now, so pinning one to the plugin no longer means anything. An existing value is still read.
+- Power is described as "hardwired" rather than "mains".
+- Changing a device's setting no longer collapses its settings panel.
 
 ### Accessories
 - Now supports Light Level Sensor, off by default. Omlet light reports values of 0-100. Apple Home will (incorrectly) label this as a lux reading, but it is still useful for triggering light-level automations.
@@ -22,6 +24,7 @@
 ### Reliability
 - Coop accessories are now tracked by hardware serials, allowing for better accessory persistence, even when a factory reset is performed.
 - One request now covers every device on the account, so the number of requests no longer grows with the number of doors.
+- Startup no longer makes the same request twice. Discovery already returns each device's full state, so there is nothing for an immediate first poll to fetch.
 
 ### Bug Fixes
 - A coop that cannot be found on the account is now reported once rather than on every poll.

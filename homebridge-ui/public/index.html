@@ -296,7 +296,7 @@
         <input type="number" class="form-control" id="removeAfterHours" placeholder="24" min="0" max="720" step="1">
         <div class="field-error" id="removeAfterHoursError"></div>
         <small class="form-text text-muted">
-          How long a device may be missing from your Omlet account before its accessory is removed from HomeKit. 0 never removes one. The clock only runs while the plugin is running and reaching Omlet.
+          Remove a device when it has not been seen in the number of hours specified. 0 to disable. Devices will never remove due to connectivity being lost or the plugin or Homebridge server being offline. This setting allows factory reset devices to reassume their existing identity in HomeKit, preserving settings and automation.
         </small>
       </div>
       
@@ -1368,10 +1368,30 @@ function togglePasswordVisibility() {
     return /autodoor/i.test(type || '') ? 'Door' : (type || 'Unknown');
   }
   
-  async function saveDeviceEntries() {
+  // Deliberately does not re-render. Rebuilding the list would collapse the panel
+  // the user is working in, so only the badge - the one thing a setting can change -
+  // is updated in place.
+  async function saveDeviceEntries(item, device) {
     pruneEntries();
     await updateConfigFromForm();
-    renderDevices();
+    
+    if (!item || !device) {
+      return;
+    }
+    
+    const badge = badgeFor(findEntry(device) || {});
+    const element = item.querySelector('.device-badge');
+    
+    element.textContent = badge.text;
+    element.className = 'device-badge' + (badge.className ? ' ' + badge.className : '');
+  }
+  
+  // Which rows the user has open, so a re-render after rediscovery does not shut
+  // them. Keyed the same way settings are.
+  const expanded = new Set();
+  
+  function rowKey(device) {
+    return (device.serial || device.deviceId || '').toLowerCase();
   }
   
   function renderDevices() {
@@ -1405,7 +1425,7 @@ function togglePasswordVisibility() {
         const level = (!onMains && device.batteryLevel !== null && device.batteryLevel !== undefined)
           ? ` (${device.batteryLevel}%)`
           : '';
-        detected.push(`<strong>Power:</strong> ${onMains ? 'mains' : 'battery' + level}`);
+        detected.push(`<strong>Power:</strong> ${onMains ? 'hardwired' : 'battery' + level}`);
       }
       
       if (device.firmware) {
@@ -1457,8 +1477,8 @@ function togglePasswordVisibility() {
               <input type="checkbox" data-role="enabled"${disabled ? ' checked' : ''}> Disable this device
             </label>
             <div class="device-warning">
-              Removes it from HomeKit. Its room, its name and any automations using it go
-              with it, and re-enabling it creates a new tile with none of them back.
+              Remove this accessory from HomeKit entirely. If you re-enable it later it
+              arrives as a new device, so any automations using it have to be set up again.
             </div>
           </div>
         </div>
@@ -1467,9 +1487,23 @@ function togglePasswordVisibility() {
       const panel = item.querySelector('.device-settings');
       const caret = item.querySelector('.device-caret');
       
+      if (expanded.has(rowKey(device))) {
+        panel.classList.remove('hidden');
+        caret.innerHTML = '&#9660;';
+      }
+      
       item.querySelector('[data-role="toggle"]').addEventListener('click', () => {
         panel.classList.toggle('hidden');
-        caret.innerHTML = panel.classList.contains('hidden') ? '&#9654;' : '&#9660;';
+        
+        const open = !panel.classList.contains('hidden');
+        
+        caret.innerHTML = open ? '&#9660;' : '&#9654;';
+        
+        if (open) {
+          expanded.add(rowKey(device));
+        } else {
+          expanded.delete(rowKey(device));
+        }
       });
       
       // The name is deliberately not editable. It is inherited from the Omlet app,
@@ -1485,7 +1519,7 @@ function togglePasswordVisibility() {
             target[field] = event.target.value;
           }
           
-          await saveDeviceEntries();
+          await saveDeviceEntries(item, device);
         });
       });
       
@@ -1498,7 +1532,7 @@ function togglePasswordVisibility() {
           target.enableLightSensor = event.target.value === 'true';
         }
         
-        await saveDeviceEntries();
+        await saveDeviceEntries(item, device);
       });
       
       panel.querySelector('[data-role="enabled"]').addEventListener('change', async (event) => {
@@ -1510,7 +1544,7 @@ function togglePasswordVisibility() {
           delete target.enabled;
         }
         
-        await saveDeviceEntries();
+        await saveDeviceEntries(item, device);
       });
       
       deviceList.appendChild(item);

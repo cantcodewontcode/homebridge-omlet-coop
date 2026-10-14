@@ -398,6 +398,33 @@ test('a door added later arrives enabled', async () => {
   w.restore();
 });
 
+test('startup makes one request, not two', async () => {
+  const w = account([door('dev1', 'Front'), door('dev2', 'Back')], { deviceId: 'dev1' });
+
+  await w.start();
+
+  // Discovery fetches /api/v1/group, and that response already carries every
+  // device's state - so there is nothing for an immediate first poll to go and get.
+  assert.equal(w.polls(), 1, 'one /api/v1/group call at startup');
+  assert.ok(w.platform.handlers.get('dev1').cachedStatus, 'and the state from it is applied');
+  assert.ok(w.platform.handlers.get('dev2').cachedStatus);
+  w.restore();
+});
+
+test('the first scheduled poll waits a full interval', async () => {
+  const w = account([door('dev1', 'Front')], { deviceId: 'dev1' });
+
+  await w.start();
+  assert.equal(w.polls(), 1);
+
+  await w.clock.advance(29 * 1000);
+  assert.equal(w.polls(), 1, 'nothing extra before the interval is up');
+
+  await w.clock.advance(2 * 1000);
+  assert.equal(w.polls(), 2, 'then the normal cadence');
+  w.restore();
+});
+
 test('a door added later appears without a restart', async () => {
   const w = account([door('dev1', 'Front')], { deviceId: 'dev1' });
 

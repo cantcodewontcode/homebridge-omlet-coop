@@ -144,7 +144,7 @@
         "default": 24,
         "minimum": 0,
         "maximum": 720,
-        "description": "How long a device may be missing from your account before its accessory is removed from HomeKit. 0 never removes one. The clock only runs while the plugin is running and reaching Omlet."
+        "description": "Remove a device when it has not been seen in the number of hours specified. 0 to disable. Devices will never remove due to connectivity being lost or the plugin or Homebridge server being offline. This setting allows factory reset devices to reassume their existing identity in HomeKit, preserving settings and automation."
       },
       "devices": {
         "title": "Per-Device Settings",
@@ -167,7 +167,7 @@
               "title": "Enabled",
               "type": "boolean",
               "default": true,
-              "description": "Unticking this removes the device from HomeKit, along with its room, its name and any automations using it."
+              "description": "Unticking this removes the accessory from HomeKit entirely. If you re-enable it later it arrives as a new device, so any automations using it have to be set up again."
             },
             "enableLight": {
               "title": "Coop Light Accessory",

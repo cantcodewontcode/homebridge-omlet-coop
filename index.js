@@ -1226,8 +1226,26 @@ class OmletCoopPlatform {
     }
     
     this.applyDiscovery(devices, authoritative);
+    
+    // Discovery just fetched /api/v1/group, and that response carries each device's
+    // full state - so apply it rather than scheduling an immediate poll that asks
+    // for the very same thing. Startup used to make two identical requests a second
+    // apart.
     this.log.info(`Polling every ${this.pollInterval / 1000}s`);
-    this.schedulePoll(0);
+    
+    for (const device of devices) {
+      const handler = this.handlers.get(device.deviceId);
+      
+      if (handler && device.status) {
+        await handler.acceptStatus(device);
+      }
+    }
+    
+    // Unless something is already mid-change, in which case fall straight into the
+    // fast cadence rather than letting a moving door sit until the next full poll.
+    const moving = [...this.handlers.values()].some(handler => handler.isTransitioning());
+    
+    this.schedulePoll(moving ? FAST_POLL_MS : this.pollInterval);
   }
   
   // Serials arrive as a MAC and people retype them with whatever separators and
@@ -1858,7 +1876,7 @@ class OmletCoopAccessory {
     if (onMains && count === 0) {
       if (this.settings.enableBattery === true && !this.batteryOverrideRefused) {
         this.batteryOverrideRefused = true;
-        this.log.warn('Battery Status is set to "Always on", but this door reports mains power with no batteries fitted, so no battery accessory is shown.');
+        this.log.warn('Battery Status is set to "Always on", but this door reports hardwired power with no batteries fitted, so no battery accessory is shown.');
       }
       return false;
     }
