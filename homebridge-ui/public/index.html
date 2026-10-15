@@ -1723,7 +1723,7 @@ function togglePasswordVisibility() {
           say('', true);
           
           if (!Number.isInteger(minutes) || minutes < 1 || minutes > 1440) {
-            say('Enter a whole number of minutes between 1 and 1440.', false);
+            say('Enter a supported value (1-1440 minutes).', false);
             return;
           }
           

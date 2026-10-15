@@ -101,7 +101,7 @@ class OmletPluginUiServer extends HomebridgePluginUiServer {
     }
     
     if (!Number.isInteger(value) || value < 1 || value > 1440) {
-      throw new RequestError('Enter a whole number of minutes between 1 and 1440', { status: 400 });
+      throw new RequestError('Enter a supported value (1-1440 minutes).', { status: 400 });
     }
     
     const stored = this.readStoredCredentials();
