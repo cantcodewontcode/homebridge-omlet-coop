@@ -61,6 +61,25 @@ This is the simplest setup option, and does not require the manual generation of
 
 Logging in generates an Omlet API key, which is saved to the Homebridge storage directory rather than `config.json`. Your coop and accessories are auto-discovered. This method impersonates the login process used by the official Omlet mobile app, so the key it generates is not visible in the Omlet Developer console and cannot be revoked.
 
+### Global Settings
+
+Applied to every device, unless a device overrides them:
+
+- **Coop lights**: Auto-discover, or never display
+- **Batteries**: Auto-discover, always display, or never display
+- **Light sensors**: Off by default. See below before turning it on
+
+### Per-Device Settings
+
+Each device has its own section in the plugin settings where any of the above can be
+overridden, the device can be hidden from HomeKit, and — for a door with a coop light
+— the **maximum light on time** can be set.
+
+The Omlet app only allows a light to stay on for up to 10 minutes. This extends it to
+as much as 1440 minutes (24 hours). It is pushed to the device as a one-time event —
+if the setting is subsequently adjusted in the Omlet app, return here and set it
+again.
+
 ### Advanced Settings
 
 Rarely needed:
@@ -68,7 +87,6 @@ Rarely needed:
 - **API Server**: Override the default API server hostname (if ever needed)
 - **Poll Interval**: Reduce how often the plugin checks device status (minimum: 30 seconds). One request covers every device on your account, so this does not change with the number of doors
 - **Remove accessories not seen for**: How long a device may be missing from your Omlet account before its accessory is removed from HomeKit. Default 24 hours; 0 never removes one
-- **Light Level Sensor**: Off by default. See below before turning it on
 - **Debug Mode**: Enable detailed logging for troubleshooting
 - **Capture device payload**: Fetches one response from Omlet and shows it ready to paste into a bug report. Serials, device names, email addresses and your wifi name are replaced with placeholders unless you ask for them. Nothing is written to the log
 

@@ -89,7 +89,7 @@
         "description": "Enable detailed logging for troubleshooting"
       },
       "enableLight": {
-        "title": "Coop Light Accessory",
+        "title": "Coop Lights",
         "type": "string",
         "default": "auto",
         "oneOf": [
@@ -100,7 +100,7 @@
             ]
           },
           {
-            "title": "Do not display",
+            "title": "Never display",
             "enum": [
               "off"
             ]
@@ -108,24 +108,24 @@
         ]
       },
       "enableBattery": {
-        "title": "Battery Status",
+        "title": "Batteries",
         "type": "string",
         "default": "auto",
         "oneOf": [
           {
-            "title": "Automatic by power type",
+            "title": "Auto-discover",
             "enum": [
               "auto"
             ]
           },
           {
-            "title": "Always show",
+            "title": "Always display",
             "enum": [
               "on"
             ]
           },
           {
-            "title": "Always hide",
+            "title": "Never display",
             "enum": [
               "off"
             ]
@@ -133,7 +133,7 @@
         ]
       },
       "enableLightSensor": {
-        "title": "Light Level Sensor",
+        "title": "Light Sensors",
         "type": "boolean",
         "default": false,
         "description": "Omlet light sensor reports values of 0-100. Apple Home will (incorrectly) label this as a lux reading, but it is still useful for triggering light-level automations."
@@ -252,6 +252,9 @@
     "email",
     "password",
     "countryCode",
+    "enableLight",
+    "enableBattery",
+    "enableLightSensor",
     {
       "type": "fieldset",
       "title": "Advanced Settings",
@@ -261,8 +264,6 @@
         "apiServer",
         "pollInterval",
         "removeAfterHours",
-        "enableLight",
-        "enableBattery",
         "debug"
       ]
     },

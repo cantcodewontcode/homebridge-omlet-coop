@@ -19,6 +19,7 @@ class OmletPluginUiServer extends HomebridgePluginUiServer {
     this.onRequest('/strip-credentials', this.handleStripCredentials.bind(this));
     this.onRequest('/capture-payload', this.handleCapturePayload.bind(this));
     this.onRequest('/reset-plugin', this.handleResetPlugin.bind(this));
+    this.onRequest('/set-light-max-on-time', this.handleSetLightMaxOnTime.bind(this));
     
     this.ready();
   }
@@ -82,6 +83,113 @@ class OmletPluginUiServer extends HomebridgePluginUiServer {
     } catch (error) {
       throw new RequestError(`Failed to reset the plugin settings: ${error.message}`, { status: 500 });
     }
+  }
+  
+  // Written straight to the device and not stored anywhere. The plugin never
+  // re-sends it, so nothing here fights the Omlet app for control of the value -
+  // if the app changes it, the user applies it again.
+  //
+  // A partial PATCH is honoured: verified against a live door 2026-10-15, where
+  // sending only `light.maxOnTime` left every other configuration field untouched.
+  // That matters, because the door's open and close times live in the same object.
+  async handleSetLightMaxOnTime(payload) {
+    const { deviceId, minutes, bearerToken } = payload || {};
+    const value = Number(minutes);
+    
+    if (!deviceId || !/^[a-zA-Z0-9]{1,32}$/.test(deviceId)) {
+      throw new RequestError('A device is required', { status: 400 });
+    }
+    
+    if (!Number.isInteger(value) || value < 1 || value > 1440) {
+      throw new RequestError('Enter a whole number of minutes between 1 and 1440', { status: 400 });
+    }
+    
+    const stored = this.readStoredCredentials();
+    const token = (stored && stored.bearerToken) || bearerToken;
+    
+    if (!token) {
+      throw new RequestError('No saved credential. Sign in first.', { status: 400 });
+    }
+    
+    try {
+      await this.patchConfiguration(token, deviceId, { light: { maxOnTime: value } });
+      
+      // 204 No Content, so the write confirms nothing. Read it back.
+      const applied = await this.readLightMaxOnTime(token, deviceId);
+      
+      return { success: true, applied: applied };
+    } catch (error) {
+      throw new RequestError(`Could not set the light timer: ${error.message}`, { status: 500 });
+    }
+  }
+  
+  patchConfiguration(token, deviceId, body) {
+    return new Promise((resolve, reject) => {
+      const data = JSON.stringify(body);
+      const req = https.request({
+        hostname: 'x107.omlet.co.uk',
+        port: 443,
+        path: `/api/v1/device/${deviceId}/configuration`,
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(data)
+        },
+        timeout: 15000
+      }, (res) => {
+        res.resume();
+        res.on('end', () => {
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            resolve();
+          } else {
+            reject(new Error(`HTTP ${res.statusCode}`));
+          }
+        });
+      });
+      
+      req.on('timeout', () => { req.destroy(); reject(new Error('Request timed out')); });
+      req.on('error', reject);
+      req.write(data);
+      req.end();
+    });
+  }
+  
+  readLightMaxOnTime(token, deviceId) {
+    return new Promise((resolve, reject) => {
+      const req = https.request({
+        hostname: 'x107.omlet.co.uk',
+        port: 443,
+        path: `/api/v1/device/${deviceId}`,
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' },
+        timeout: 15000
+      }, (res) => {
+        let body = '';
+        
+        res.on('data', (chunk) => { body += chunk; });
+        res.on('end', () => {
+          if (res.statusCode !== 200) {
+            reject(new Error(`HTTP ${res.statusCode}`));
+            return;
+          }
+          
+          try {
+            // This endpoint returns a bare object; /api/v1/group returns an array.
+            const parsed = JSON.parse(body);
+            const device = Array.isArray(parsed) ? parsed[0] : parsed;
+            
+            resolve(device?.configuration?.light?.maxOnTime);
+          } catch (error) {
+            reject(new Error('Could not read the device back'));
+          }
+        });
+      });
+      
+      req.on('timeout', () => { req.destroy(); reject(new Error('Request timed out')); });
+      req.on('error', reject);
+      req.end();
+    });
   }
   
   async handleStripCredentials() {
@@ -511,6 +619,7 @@ class OmletPluginUiServer extends HomebridgePluginUiServer {
                   lightEquipped: device.configuration?.light
                     ? Number(device.configuration.light.equipped) > 0
                     : undefined,
+                  maxOnTime: device.configuration?.light?.maxOnTime,
                   powerSource: device.state?.general?.powerSource || null,
                   batteryLevel: device.state?.general?.batteryLevel ?? null,
                   firmware: device.state?.general?.firmwareVersionCurrent || null

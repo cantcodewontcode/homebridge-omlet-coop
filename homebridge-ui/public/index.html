@@ -193,6 +193,41 @@
     <div id="connectedDetails" style="padding: 15px; background: #f8f9fa; border-radius: 6px; margin-bottom: 15px;"></div>
     <button id="reauthButton" class="btn btn-primary">Re-authenticate</button>
     <button id="disconnectButton" class="btn" style="background: #dc3545; color: #fff;">Reset Plugin</button>
+    <div id="globalSection">
+      <h3 style="font-size: 15px; margin: 22px 0 10px 0;">Global Settings</h3>
+      <small class="form-text text-muted" style="margin: -6px 0 12px 0;">
+        Applied to every device, unless a device overrides them below.
+      </small>
+      
+      <div class="form-group">
+        <label for="enableLight">Coop lights</label>
+        <select class="form-control" id="enableLight">
+          <option value="auto" selected>Auto-discover</option>
+          <option value="off">Never display</option>
+        </select>
+      </div>
+      
+      <div class="form-group">
+        <label for="enableBattery">Batteries</label>
+        <select class="form-control" id="enableBattery">
+          <option value="auto" selected>Auto-discover</option>
+          <option value="on">Always display</option>
+          <option value="off">Never display</option>
+        </select>
+      </div>
+      
+      <div class="form-group">
+        <label for="enableLightSensor">Light sensors</label>
+        <select class="form-control" id="enableLightSensor">
+          <option value="false" selected>Do not display</option>
+          <option value="true">Display</option>
+        </select>
+        <small class="form-text text-muted">
+          Omlet light sensor reports values of 0-100. Apple Home will (incorrectly) label this as a lux reading, but it is still useful for triggering light-level automations.
+        </small>
+      </div>
+    </div>
+    
     <div id="devicesSection">
       <h3 style="font-size: 15px; margin: 22px 0 0 0;">Devices</h3>
       <div id="deviceList" class="device-list"></div>
@@ -294,32 +329,6 @@
         <div class="field-error" id="removeAfterHoursError"></div>
         <small class="form-text text-muted">
           Remove a device when it has not been seen in the number of hours specified. 0 to disable. Devices will never remove due to connectivity being lost or the plugin or Homebridge server being offline. This setting allows factory reset devices to reassume their existing identity in HomeKit, preserving settings and automation.
-        </small>
-      </div>
-      
-      <div class="form-group">
-        <label for="enableLight">Coop Light Accessory</label>
-        <select class="form-control" id="enableLight">
-          <option value="auto" selected>Auto-discover</option>
-          <option value="off">Do not display</option>
-        </select>
-      </div>
-      
-      <div class="form-group">
-        <label for="enableBattery">Battery Status</label>
-        <select class="form-control" id="enableBattery">
-          <option value="auto" selected>Automatic by power type</option>
-          <option value="on">Always show</option>
-          <option value="off">Always hide</option>
-        </select>
-      </div>
-      
-      <div class="form-group">
-        <label>
-          <input type="checkbox" id="enableLightSensor"> Show coop light level as a sensor
-        </label>
-        <small class="form-text text-muted">
-          Omlet light sensor reports values of 0-100. Apple Home will (incorrectly) label this as a lux reading, but it is still useful for triggering light-level automations.
         </small>
       </div>
       
@@ -474,7 +483,7 @@ function togglePasswordVisibility() {
   if (currentConfig.debug) {
     document.getElementById('debugMode').checked = currentConfig.debug;
   }
-  document.getElementById('enableLightSensor').checked = (currentConfig.enableLightSensor === true);
+  document.getElementById('enableLightSensor').value = currentConfig.enableLightSensor === true ? 'true' : 'false';
   // Older configs hold booleans; those are explicit overrides, not "auto".
   const toTriState = (value) => {
     if (value === undefined || value === null || value === '' || value === 'auto') {
@@ -504,7 +513,7 @@ function togglePasswordVisibility() {
       devices: JSON.parse(JSON.stringify(deviceEntries)),
       enableLight: document.getElementById('enableLight').value,
       enableBattery: document.getElementById('enableBattery').value,
-      enableLightSensor: document.getElementById('enableLightSensor').checked,
+      enableLightSensor: document.getElementById('enableLightSensor').value === 'true',
       debug: document.getElementById('debugMode').checked
     };
     
@@ -755,7 +764,7 @@ function togglePasswordVisibility() {
       // Put the form back to its defaults, so the page matches the file.
       document.getElementById('enableLight').value = 'auto';
       document.getElementById('enableBattery').value = 'auto';
-      document.getElementById('enableLightSensor').checked = false;
+      document.getElementById('enableLightSensor').value = 'false';
       document.getElementById('debugMode').checked = false;
       document.getElementById('apiServer').value = '';
       document.getElementById('pollInterval').value = '';
@@ -997,7 +1006,7 @@ function togglePasswordVisibility() {
     const apiServer = document.getElementById('apiServer').value.trim() || 'x107.omlet.co.uk';
     const pollInterval = parseInt(document.getElementById('pollInterval').value) || 30;
     const debugMode = document.getElementById('debugMode').checked;
-    const lightSensorMode = document.getElementById('enableLightSensor').checked;
+    const lightSensorMode = document.getElementById('enableLightSensor').value === 'true';
     const enableLight = document.getElementById('enableLight').value;
     const enableBattery = document.getElementById('enableBattery').value;
     
@@ -1559,7 +1568,7 @@ function togglePasswordVisibility() {
           <div class="form-group">
             <label>Light level sensor</label>
             <select class="form-control" data-role="enableLightSensor">
-              <option value=""${sensor === undefined ? ' selected' : ''}>Use the plugin setting</option>
+              <option value=""${sensor === undefined ? ' selected' : ''}>Use global setting</option>
               <option value="true"${sensor === true ? ' selected' : ''}>Show</option>
               <option value="false"${sensor === false ? ' selected' : ''}>Do not show</option>
             </select>
@@ -1571,7 +1580,7 @@ function togglePasswordVisibility() {
           <div class="form-group">
             <label>Coop light accessory</label>
             <select class="form-control" data-role="enableLight">
-              <option value=""${light === '' ? ' selected' : ''}>Use the plugin setting</option>
+              <option value=""${light === '' ? ' selected' : ''}>Use global setting</option>
               <option value="auto"${light === 'auto' ? ' selected' : ''}>Auto-discover</option>
               <option value="off"${light === 'off' ? ' selected' : ''}>Do not display</option>
             </select>
@@ -1579,7 +1588,7 @@ function togglePasswordVisibility() {
           <div class="form-group">
             <label>Battery status</label>
             <select class="form-control" data-role="enableBattery">
-              <option value=""${battery === '' ? ' selected' : ''}>Use the plugin setting</option>
+              <option value=""${battery === '' ? ' selected' : ''}>Use global setting</option>
               <option value="auto"${battery === 'auto' ? ' selected' : ''}>Automatic by power type</option>
               <option value="on"${battery === 'on' ? ' selected' : ''}>Always show</option>
               <option value="off"${battery === 'off' ? ' selected' : ''}>Always hide</option>
@@ -1588,11 +1597,25 @@ function togglePasswordVisibility() {
           <div class="form-group">
             <label>Light level sensor</label>
             <select class="form-control" data-role="enableLightSensor">
-              <option value=""${sensor === undefined ? ' selected' : ''}>Use the plugin setting</option>
+              <option value=""${sensor === undefined ? ' selected' : ''}>Use global setting</option>
               <option value="true"${sensor === true ? ' selected' : ''}>Show</option>
               <option value="false"${sensor === false ? ' selected' : ''}>Do not show</option>
             </select>
           </div>
+          ${device.lightEquipped ? `
+          <div class="form-group" style="margin-top: 16px; padding-top: 14px; border-top: 1px solid #dee2e6;">
+            <label>Apply Maximum Time On setting for light (minutes):</label>
+            <div style="display: flex; gap: 8px;">
+              <input type="number" class="form-control" data-role="maxOnTime" min="1" max="1440" step="1"
+                style="flex: 1;" value="${device.maxOnTime === undefined ? '' : device.maxOnTime}">
+              <button type="button" class="btn btn-primary" data-role="applyMaxOnTime">Apply</button>
+            </div>
+            <div class="field-error" data-role="maxOnTimeError"></div>
+            <small class="form-text text-muted">
+              The Omlet app only allows a light to stay on for up to 10 minutes, but it is often desirable to have the lights on for longer periods of time. Use this option to extend the maximum time on for up to 1440 minutes (24 hours). Please note, this pushes the setting as a one-time event. If the setting is subsequently adjusted in the Omlet app, you may return here to adjust the time again.
+            </small>
+          </div>
+          ` : ''}
       `;
       
       item.innerHTML = `
@@ -1666,6 +1689,51 @@ function togglePasswordVisibility() {
           await saveDeviceEntries(item, device);
         });
       });
+      
+      // Deliberately not a stored setting: it writes to the device once and the
+      // plugin never re-sends it, so nothing here fights the Omlet app for the
+      // value. That also means it does not count toward the Customized badge.
+      const applyButton = panel.querySelector('[data-role="applyMaxOnTime"]');
+      
+      if (applyButton) {
+        applyButton.addEventListener('click', async () => {
+          const input = panel.querySelector('[data-role="maxOnTime"]');
+          const error = panel.querySelector('[data-role="maxOnTimeError"]');
+          const minutes = parseInt(input.value, 10);
+          
+          error.textContent = '';
+          
+          if (!Number.isInteger(minutes) || minutes < 1 || minutes > 1440) {
+            error.textContent = 'Enter a whole number of minutes between 1 and 1440.';
+            return;
+          }
+          
+          applyButton.disabled = true;
+          applyButton.textContent = 'Applying...';
+          
+          try {
+            const result = await homebridge.request('/set-light-max-on-time', {
+              deviceId: device.deviceId,
+              minutes: minutes,
+              bearerToken: currentConfig.bearerToken || undefined
+            });
+            
+            // Read back from the device, so a silently clamped value shows up
+            // rather than the page claiming success at whatever was typed.
+            if (result.applied !== undefined && result.applied !== null) {
+              input.value = result.applied;
+              device.maxOnTime = result.applied;
+            }
+            
+            showStatus(`${device.name}: coop light will switch off after ${input.value} minutes.`, 'success');
+          } catch (requestError) {
+            error.textContent = requestError.message;
+          } finally {
+            applyButton.disabled = false;
+            applyButton.textContent = 'Apply';
+          }
+        });
+      }
       
       const sensorControl = panel.querySelector('[data-role="enableLightSensor"]');
       

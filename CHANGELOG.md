@@ -27,6 +27,9 @@
 - Debug mode no longer prints the full device payload when visiting plugin settings.
 
 ### Settings
+- Coop lights, batteries and light sensors have moved out of advanced settings into a **Global Settings** section above the device list, since they decide what each device publishes. Advanced settings now holds only API server, poll interval, accessory removal, debug logging and payload capture.
+- Per-device dropdowns now read "Use global setting" rather than "Use the plugin setting".
+- Added a maximum light on time setting to each door with a coop light. The Omlet app only allows up to 10 minutes; this extends it to as much as 1440 minutes (24 hours). It is pushed to the device as a one-time event, so if the setting is later adjusted in the Omlet app you can return and set it again.
 - The settings page now lists every device on the account, with its type and serial.
 - A new **Re-authenticate** button allows users to force a fresh re-authentication while preserving all plugin config.
 - A new **Reset Plugin** button allows users to wipe all plugin configuration without requiring the plugin to be deleted and reinstalled.
