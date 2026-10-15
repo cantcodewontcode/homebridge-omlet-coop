@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.9.10-beta.2] - 2026-10-14
+## [0.9.10-beta.3] - 2026-10-14
 
 **Beta.** The new multi-door and feeder features have had limited testing on real-world setups. Please report anything odd at [the issue tracker](https://github.com/cantcodewontcode/homebridge-omlet-coop/issues), and use **Capture device payload** in your plugin's advanced settings to attach what your account actually returns.
 
