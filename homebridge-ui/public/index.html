@@ -126,6 +126,17 @@
   .device-settings .form-group:last-child {
     margin-bottom: 0;
   }
+  .device-feedback {
+    font-size: 12px;
+    margin-top: 6px;
+    min-height: 16px;
+  }
+  .device-feedback.ok {
+    color: #0f5132;
+  }
+  .device-feedback.bad {
+    color: #842029;
+  }
   .device-warning {
     font-size: 12px;
     color: #842029;
@@ -1610,7 +1621,7 @@ function togglePasswordVisibility() {
                 style="flex: 1;" value="${device.maxOnTime === undefined ? '' : device.maxOnTime}">
               <button type="button" class="btn btn-primary" data-role="applyMaxOnTime">Apply</button>
             </div>
-            <div class="field-error" data-role="maxOnTimeError"></div>
+            <div class="device-feedback" data-role="maxOnTimeFeedback"></div>
             <small class="form-text text-muted">
               The Omlet app only allows a light to stay on for up to 10 minutes, but it is often desirable to have the lights on for longer periods of time. Use this option to extend the maximum time on for up to 1440 minutes (24 hours). Please note, this pushes the setting as a one-time event. If the setting is subsequently adjusted in the Omlet app, you may return here to adjust the time again.
             </small>
@@ -1698,13 +1709,21 @@ function togglePasswordVisibility() {
       if (applyButton) {
         applyButton.addEventListener('click', async () => {
           const input = panel.querySelector('[data-role="maxOnTime"]');
-          const error = panel.querySelector('[data-role="maxOnTimeError"]');
+          const feedback = panel.querySelector('[data-role="maxOnTimeFeedback"]');
           const minutes = parseInt(input.value, 10);
           
-          error.textContent = '';
+          // Reported here rather than in the page's status bar: that sits at the
+          // top of the page, and by the time a fold-down is open it is well off
+          // screen, so a success message there is a success message nobody sees.
+          const say = (text, ok) => {
+            feedback.textContent = text;
+            feedback.className = 'device-feedback ' + (ok ? 'ok' : 'bad');
+          };
+          
+          say('', true);
           
           if (!Number.isInteger(minutes) || minutes < 1 || minutes > 1440) {
-            error.textContent = 'Enter a whole number of minutes between 1 and 1440.';
+            say('Enter a whole number of minutes between 1 and 1440.', false);
             return;
           }
           
@@ -1725,9 +1744,9 @@ function togglePasswordVisibility() {
               device.maxOnTime = result.applied;
             }
             
-            showStatus(`${device.name}: coop light will switch off after ${input.value} minutes.`, 'success');
+            say(`\u2713 Applied. The light will now stay on for up to ${input.value} minutes.`, true);
           } catch (requestError) {
-            error.textContent = requestError.message;
+            say(requestError.message, false);
           } finally {
             applyButton.disabled = false;
             applyButton.textContent = 'Apply';
