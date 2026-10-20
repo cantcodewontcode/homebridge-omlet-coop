@@ -1,4 +1,4 @@
-// Fidelity tests: these assert behaviour that 0.9.9 was verified to have on real
+// Fidelity tests: these assert behavior that 0.9.9 was verified to have on real
 // hardware. They exist first to prove the harness drives the plugin faithfully,
 // before anything new is trusted to it.
 

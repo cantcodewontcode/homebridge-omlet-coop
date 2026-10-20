@@ -88,6 +88,63 @@
     font-size: 13px;
     color: #666;
   }
+  .device-head {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+  }
+  .device-head .device-title {
+    flex: 1;
+    min-width: 0;
+  }
+  .device-caret {
+    color: #666;
+    font-size: 12px;
+    margin-left: 10px;
+  }
+  .device-badge {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    white-space: nowrap;
+    background: #e9ecef;
+    color: #495057;
+  }
+  .device-badge.disabled {
+    background: #f8d7da;
+    color: #842029;
+  }
+  .device-badge.modified {
+    background: #cfe2ff;
+    color: #084298;
+  }
+  .device-settings {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid #dee2e6;
+  }
+  .device-settings .form-group:last-child {
+    margin-bottom: 0;
+  }
+  .device-feedback {
+    font-size: 12px;
+    margin-top: 6px;
+    min-height: 16px;
+  }
+  .device-feedback.ok {
+    color: #0f5132;
+  }
+  .device-feedback.bad {
+    color: #842029;
+  }
+  .device-warning {
+    font-size: 12px;
+    color: #842029;
+    margin-top: 6px;
+  }
+  .device-missing {
+    border-left: 3px solid #ffc107;
+  }
   .status-message {
     padding: 12px;
     border-radius: 4px;
@@ -145,7 +202,47 @@
   
   <div id="connectedPanel" class="hidden">
     <div id="connectedDetails" style="padding: 15px; background: #f8f9fa; border-radius: 6px; margin-bottom: 15px;"></div>
-    <button id="disconnectButton" class="btn" style="background: #dc3545; color: #fff;">Disconnect and set up again</button>
+    <button id="reauthButton" class="btn btn-primary">Re-authenticate</button>
+    <button id="disconnectButton" class="btn" style="background: #dc3545; color: #fff;">Reset Plugin</button>
+    <div id="globalSection">
+      <h3 style="font-size: 15px; margin: 22px 0 10px 0;">Global Settings</h3>
+      <small class="form-text text-muted" style="margin: -6px 0 12px 0;">
+        Applied to every device, unless a device overrides them below.
+      </small>
+      
+      <div class="form-group">
+        <label for="enableLight">Coop lights</label>
+        <select class="form-control" id="enableLight">
+          <option value="auto" selected>Auto-discover</option>
+          <option value="off">Never display</option>
+        </select>
+      </div>
+      
+      <div class="form-group">
+        <label for="enableBattery">Batteries</label>
+        <select class="form-control" id="enableBattery">
+          <option value="auto" selected>Auto-discover</option>
+          <option value="on">Always display</option>
+          <option value="off">Never display</option>
+        </select>
+      </div>
+      
+      <div class="form-group">
+        <label for="enableLightSensor">Light sensors</label>
+        <select class="form-control" id="enableLightSensor">
+          <option value="false" selected>Do not display</option>
+          <option value="true">Display</option>
+        </select>
+        <small class="form-text text-muted">
+          Omlet light sensor reports values of 0-100. Apple Home will (incorrectly) label this as a lux reading, but it is still useful for triggering light-level automations.
+        </small>
+      </div>
+    </div>
+    
+    <div id="devicesSection">
+      <h3 style="font-size: 15px; margin: 22px 0 0 0;">Devices</h3>
+      <div id="deviceList" class="device-list"></div>
+    </div>
   </div>
   
   <div id="loginForm">
@@ -229,32 +326,21 @@
       </div>
       
       <div class="form-group">
-        <label for="manualDeviceId">Device ID</label>
-        <input type="text" class="form-control" id="manualDeviceId" placeholder="optional, will be auto-discovered" pattern="[a-zA-Z0-9]{1,32}">
-        <div class="field-error" id="manualDeviceIdError"></div>
-      </div>
-      
-      <div class="form-group">
         <label for="pollInterval">Poll Interval (seconds)</label>
         <input type="number" class="form-control" id="pollInterval" placeholder="30" min="30" max="300" step="1">
         <div class="field-error" id="pollIntervalError"></div>
+        <small class="form-text text-muted">
+          One request covers every device on your account, so this does not change with the number of doors.
+        </small>
       </div>
       
       <div class="form-group">
-        <label for="enableLight">Coop Light Accessory</label>
-        <select class="form-control" id="enableLight">
-          <option value="auto" selected>Auto-discover</option>
-          <option value="off">Do not display</option>
-        </select>
-      </div>
-      
-      <div class="form-group">
-        <label for="enableBattery">Battery Status</label>
-        <select class="form-control" id="enableBattery">
-          <option value="auto" selected>Automatic by power type</option>
-          <option value="on">Always show</option>
-          <option value="off">Always hide</option>
-        </select>
+        <label for="removeAfterHours">Remove accessories not seen for (hours)</label>
+        <input type="number" class="form-control" id="removeAfterHours" placeholder="24" min="0" max="720" step="1">
+        <div class="field-error" id="removeAfterHoursError"></div>
+        <small class="form-text text-muted">
+          Remove a device when it has not been seen in the number of hours specified. 0 to disable. Devices will never remove due to connectivity being lost or the plugin or Homebridge server being offline. This setting allows factory reset devices to reassume their existing identity in HomeKit, preserving settings and automation.
+        </small>
       </div>
       
       <div class="form-group">
@@ -262,14 +348,24 @@
           <input type="checkbox" id="debugMode"> Enable Debug logging mode
         </label>
       </div>
+      
+      <div class="form-group" style="margin-bottom: 0;">
+        <label>Device troubleshooting</label>
+        <button type="button" id="capturePayloadButton" class="btn btn-primary">Capture device payload</button>
+        <label style="display: block; font-weight: normal; margin-top: 8px;">
+          <input type="checkbox" id="capturePayloadRaw"> Include serials, names and network details
+        </label>
+        <small class="form-text text-muted">
+          Fetches one response from Omlet and shows it below, ready to paste into a bug report. Serials, device names, email addresses and your wifi name are replaced with placeholders unless you tick the box above. Nothing is written to the log.
+        </small>
+        <textarea id="capturePayloadOutput" class="form-control hidden" rows="14" readonly
+          style="margin-top: 10px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; white-space: pre;"></textarea>
+      </div>
     </div>
     
     <button id="loginButton" class="btn btn-primary">Login</button>
   </div>
   
-  <div id="devicesSection" class="hidden">
-    <div id="deviceList" class="device-list"></div>
-  </div>
 </div>
 
 <script>
@@ -322,6 +418,15 @@ function togglePasswordVisibility() {
     } catch (ignored) { /* nothing more we can do */ }
   });
   
+  // The Device ID field is gone from the page: every device on the account is
+  // published now, and per-device settings are keyed on the hardware serial, so
+  // pinning one ID means nothing. A value written by an older version is still read
+  // and still passed to the server for validation - there is just no way to set a
+  // new one.
+  function configuredDeviceId() {
+    return typeof currentConfig.deviceId === 'string' ? currentConfig.deviceId.trim() : '';
+  }
+  
   // Anything in this list is a credential and must never end up in config.json.
   const CREDENTIAL_FIELDS = ['email', 'password', 'bearerToken'];
   
@@ -331,6 +436,14 @@ function togglePasswordVisibility() {
     const clean = JSON.parse(JSON.stringify(config));
     
     CREDENTIAL_FIELDS.forEach(field => delete clean[field]);
+    
+    // Every login path builds its config object from scratch, so without this a
+    // re-authentication would silently drop every per-device setting. Enablement in
+    // particular has to survive it: someone who disabled three devices, hit a
+    // credential problem and signed back in must not get them all back.
+    if (clean.devices === undefined && deviceEntries.length) {
+      clean.devices = JSON.parse(JSON.stringify(deviceEntries));
+    }
     
     await homebridge.updatePluginConfig([clean]);
     await homebridge.savePluginConfig();
@@ -372,8 +485,8 @@ function togglePasswordVisibility() {
   if (currentConfig.bearerToken) {
     document.getElementById('bearerToken').value = currentConfig.bearerToken;
   }
-  if (currentConfig.deviceId) {
-    document.getElementById('manualDeviceId').value = currentConfig.deviceId;
+  if (currentConfig.removeAfterHours !== undefined) {
+    document.getElementById('removeAfterHours').value = currentConfig.removeAfterHours;
   }
   if (currentConfig.pollInterval) {
     document.getElementById('pollInterval').value = currentConfig.pollInterval;
@@ -381,6 +494,7 @@ function togglePasswordVisibility() {
   if (currentConfig.debug) {
     document.getElementById('debugMode').checked = currentConfig.debug;
   }
+  document.getElementById('enableLightSensor').value = currentConfig.enableLightSensor === true ? 'true' : 'false';
   // Older configs hold booleans; those are explicit overrides, not "auto".
   const toTriState = (value) => {
     if (value === undefined || value === null || value === '' || value === 'auto') {
@@ -401,9 +515,16 @@ function togglePasswordVisibility() {
       platform: 'OmletCoop',
       countryCode: document.getElementById('countryCode').value,
       authMethod: selectedMethod(),
-      deviceId: document.getElementById('manualDeviceId').value.trim() || undefined,
+      // Not editable any more, but not thrown away either: the plugin uses it to
+      // work out which device an upgrading single-door install was already using.
+      deviceId: configuredDeviceId() || undefined,
+      // Always sent, even when empty. updatePluginConfig merges, so omitting the key
+      // leaves the previous array in place - and pruning the last entry would then
+      // never actually remove anything.
+      devices: JSON.parse(JSON.stringify(deviceEntries)),
       enableLight: document.getElementById('enableLight').value,
       enableBattery: document.getElementById('enableBattery').value,
+      enableLightSensor: document.getElementById('enableLightSensor').value === 'true',
       debug: document.getElementById('debugMode').checked
     };
     
@@ -415,6 +536,12 @@ function togglePasswordVisibility() {
     
     // Only include pollInterval if user explicitly set it (not empty)
     updatedConfig.pollInterval = safePollInterval(document.getElementById('pollInterval').value);
+    
+    const hours = parseInt(document.getElementById('removeAfterHours').value, 10);
+    
+    if (Number.isFinite(hours) && hours >= 0 && hours <= 720) {
+      updatedConfig.removeAfterHours = hours;
+    }
     
     // Remove undefined values to keep config clean
     Object.keys(updatedConfig).forEach(key => {
@@ -435,10 +562,11 @@ function togglePasswordVisibility() {
   document.getElementById('countryCode').addEventListener('change', updateConfigFromForm);
   document.getElementById('apiServer').addEventListener('change', updateConfigFromForm);
   document.getElementById('bearerToken').addEventListener('change', updateConfigFromForm);
-  document.getElementById('manualDeviceId').addEventListener('change', updateConfigFromForm);
   document.getElementById('pollInterval').addEventListener('change', updateConfigFromForm);
+  document.getElementById('removeAfterHours').addEventListener('change', updateConfigFromForm);
   document.getElementById('enableLight').addEventListener('change', updateConfigFromForm);
   document.getElementById('enableBattery').addEventListener('change', updateConfigFromForm);
+  document.getElementById('enableLightSensor').addEventListener('change', updateConfigFromForm);
   document.getElementById('debugMode').addEventListener('change', updateConfigFromForm);
   
   // Blank or out of range is never written through - it always becomes a usable
@@ -529,30 +657,17 @@ function togglePasswordVisibility() {
   // While a working credential is stored there is nothing to choose, so the method
   // radios only get in the way. Show what we are connected to, and one way out.
   function showConnectedView(result) {
-    const device = (result.devices && result.devices[0]) || null;
+    const devices = (result.devices || []);
     const method = (currentConfig.authMethod === 'account')
       ? 'Omlet account'
       : 'Developer API key';
     
     let html = `<p style="margin-top: 0;"><strong style="color: #28a745;">Connected to Omlet</strong></p>`;
     html += `<p style="margin-bottom: 4px;"><strong>Method:</strong> ${method}</p>`;
-    
-    if (device) {
-      html += `<p style="margin-bottom: 4px;"><strong>Coop door:</strong> ${device.name}</p>`;
-      if (device.lightEquipped !== undefined) {
-        html += `<p style="margin-bottom: 4px;"><strong>Coop light:</strong> ${device.lightEquipped ? 'detected' : 'not fitted'}</p>`;
-      }
-      if (device.powerSource) {
-        const onMains = device.powerSource.toLowerCase() === 'external';
-        const level = (!onMains && device.batteryLevel !== null && device.batteryLevel !== undefined) ? ` (${device.batteryLevel}%)` : '';
-        html += `<p style="margin-bottom: 4px;"><strong>Power:</strong> ${onMains ? 'mains' : 'battery' + level}</p>`;
-      }
-      if (device.firmware) {
-        html += `<p style="margin-bottom: 0;"><strong>Firmware:</strong> ${device.firmware}</p>`;
-      }
-    }
+    html += `<p style="margin-bottom: 0;"><strong>Devices:</strong> ${devices.length}</p>`;
     
     document.getElementById('connectedDetails').innerHTML = html;
+    displayDevices(devices);
     document.getElementById('connectedPanel').classList.remove('hidden');
     document.getElementById('setupPanel').classList.add('hidden');
     document.getElementById('loginButton').classList.add('hidden');
@@ -562,21 +677,111 @@ function togglePasswordVisibility() {
   // Note: window.confirm is unusable here. This page runs in a sandboxed iframe,
   // where modal dialogs are ignored outright - the call returns false and the click
   // silently does nothing. The red button is the warning.
+  // A single snapshot beats logging every payload: at two polls a minute the log
+  // fills with responses and buries whatever else you were trying to read.
+  document.getElementById('capturePayloadButton').addEventListener('click', async () => {
+    const button = document.getElementById('capturePayloadButton');
+    const output = document.getElementById('capturePayloadOutput');
+    const raw = document.getElementById('capturePayloadRaw').checked;
+    
+    button.disabled = true;
+    button.textContent = 'Capturing...';
+    
+    try {
+      const result = await homebridge.request('/capture-payload', {
+        bearerToken: currentConfig.bearerToken || undefined,
+        redact: !raw
+      });
+      
+      output.value = result.payload;
+      output.classList.remove('hidden');
+      
+      // The settings page runs in a sandboxed iframe, where the clipboard API is
+      // often blocked outright. Selecting the text is the fallback that always works.
+      let copied = false;
+      
+      try {
+        await navigator.clipboard.writeText(result.payload);
+        copied = true;
+      } catch (clipboardError) {
+        output.focus();
+        output.select();
+      }
+      
+      showStatus(copied
+        ? (result.redacted ? 'Payload copied to the clipboard, with identifying details replaced.' : 'Payload copied to the clipboard. It contains serials and network details.')
+        : 'Payload captured and selected below - press Cmd-C or Ctrl-C to copy.', 'success');
+    } catch (error) {
+      output.classList.add('hidden');
+      showStatus('Could not capture the payload: ' + error.message, 'error');
+    } finally {
+      button.disabled = false;
+      button.textContent = 'Capture device payload';
+    }
+  });
+  
+  // Separate from Reset Plugin on purpose. Resetting used to be the only route back
+  // to a login screen, so it got used for credential trouble, and everything it
+  // cleared went with it as collateral.
+  document.getElementById('reauthButton').addEventListener('click', () => {
+    document.getElementById('bearerToken').value = '';
+    document.getElementById('password').value = '';
+    showSetupView();
+    showStatus('Sign in again below, then click Save. Nothing else is changed.', 'info');
+  });
+  
+  // window.confirm is unusable here: this page runs in a sandboxed iframe, where
+  // modal dialogs are ignored outright - the call returns false and the click
+  // silently does nothing. So the button confirms itself. It used to rely on being
+  // red, which was enough when it only signed you out and is not now.
+  let resetArmed = null;
+  
+  function disarmReset() {
+    const button = document.getElementById('disconnectButton');
+    
+    clearTimeout(resetArmed);
+    resetArmed = null;
+    button.textContent = 'Reset Plugin';
+  }
+  
   document.getElementById('disconnectButton').addEventListener('click', async () => {
     const button = document.getElementById('disconnectButton');
+    
+    if (!resetArmed) {
+      button.textContent = 'CLICK AGAIN TO ERASE ALL SETTINGS';
+      resetArmed = setTimeout(disarmReset, 6000);
+      return;
+    }
+    
+    clearTimeout(resetArmed);
+    resetArmed = null;
     button.disabled = true;
     
     try {
       await homebridge.request('/forget', {});
       
-      // Clear anything left in config too, so nothing can quietly reconnect.
-      const cleared = JSON.parse(JSON.stringify(currentConfig || {}));
-      delete cleared.bearerToken;
-      delete cleared.email;
-      delete cleared.password;
-      cleared.platform = 'OmletCoop';
-      await homebridge.updatePluginConfig([cleared]);
-      currentConfig = cleared;
+      // A full reset, not just a sign-out: every plugin setting goes, so people can
+      // start clean without uninstalling and reinstalling. Credential trouble is
+      // Re-authenticate's job. Done server-side because updatePluginConfig merges,
+      // and a merge cannot remove a key.
+      const result = await homebridge.request('/reset-plugin', {});
+      const refreshed = await homebridge.getPluginConfig();
+      
+      currentConfig = (refreshed && refreshed[0]) || { platform: 'OmletCoop', name: 'Omlet Coop' };
+      deviceEntries = [];
+      lastDiscovered = [];
+      expanded.clear();
+      
+      // Put the form back to its defaults, so the page matches the file.
+      document.getElementById('enableLight').value = 'auto';
+      document.getElementById('enableBattery').value = 'auto';
+      document.getElementById('enableLightSensor').value = 'false';
+      document.getElementById('debugMode').checked = false;
+      document.getElementById('apiServer').value = '';
+      document.getElementById('pollInterval').value = '';
+      document.getElementById('removeAfterHours').value = '';
+      document.getElementById('countryCode').value = 'US';
+      document.getElementById('deviceList').innerHTML = '';
       
       // Reopen on whichever method they were using.
       const previous = (currentConfig.authMethod === 'account') ? 'account' : 'key';
@@ -588,15 +793,15 @@ function togglePasswordVisibility() {
       
       document.getElementById('bearerToken').value = '';
       document.getElementById('password').value = '';
-      document.getElementById('devicesSection').classList.add('hidden');
       
       showSetupView();
-      showStatus('Credentials removed. Set up again below, then click Save.', 'info');
+      showStatus('Plugin settings reset. Set up again below, then click Save.', 'info');
     } catch (error) {
       console.error('Forget failed:', error);
       showStatus('Could not remove the saved credentials: ' + error.message, 'error');
     } finally {
       button.disabled = false;
+      button.textContent = 'Reset Plugin';
     }
   });
   
@@ -715,18 +920,6 @@ function togglePasswordVisibility() {
         }
         break;
         
-      case 'manualDeviceId':
-        const deviceIdRegex = /^[a-zA-Z0-9]{1,32}$/;
-        isValid = deviceIdRegex.test(value);
-        if (value.length > 32) {
-          errorMsg = 'Device ID must be 32 characters or less';
-        } else if (!/^[a-zA-Z0-9]+$/.test(value)) {
-          errorMsg = 'Device ID must be alphanumeric only';
-        } else {
-          errorMsg = 'Invalid device ID format';
-        }
-        break;
-        
       case 'pollInterval':
         const interval = parseInt(value);
         if (isNaN(interval)) {
@@ -761,7 +954,6 @@ function togglePasswordVisibility() {
   document.getElementById('email').addEventListener('blur', () => validateField('email'));
   document.getElementById('apiServer').addEventListener('blur', () => validateField('apiServer'));
   document.getElementById('bearerToken').addEventListener('blur', () => validateField('bearerToken'));
-  document.getElementById('manualDeviceId').addEventListener('blur', () => validateField('manualDeviceId'));
   document.getElementById('pollInterval').addEventListener('blur', () => validateField('pollInterval'));
   
   // Also validate on input (as user types) for immediate feedback
@@ -801,17 +993,6 @@ function togglePasswordVisibility() {
     }
   });
   
-  document.getElementById('manualDeviceId').addEventListener('input', () => {
-    const field = document.getElementById('manualDeviceId');
-    const errorDiv = document.getElementById('manualDeviceIdError');
-    if (field.value.trim()) {
-      setTimeout(() => validateField('manualDeviceId'), 500);
-    } else {
-      field.style.borderColor = '';
-      errorDiv.classList.remove('show');
-      updateButtonStates();
-    }
-  });
   
   document.getElementById('pollInterval').addEventListener('input', () => {
     const field = document.getElementById('pollInterval');
@@ -832,10 +1013,11 @@ function togglePasswordVisibility() {
     const countryCode = document.getElementById('countryCode').value;
     const devKey = document.getElementById('bearerToken').value.trim();
     const manualToken = ''; // no longer a field: the Developer API key covers this
-    const manualDeviceId = document.getElementById('manualDeviceId').value.trim();
+    const manualDeviceId = configuredDeviceId();
     const apiServer = document.getElementById('apiServer').value.trim() || 'x107.omlet.co.uk';
     const pollInterval = parseInt(document.getElementById('pollInterval').value) || 30;
     const debugMode = document.getElementById('debugMode').checked;
+    const lightSensorMode = document.getElementById('enableLightSensor').value === 'true';
     const enableLight = document.getElementById('enableLight').value;
     const enableBattery = document.getElementById('enableBattery').value;
     
@@ -865,6 +1047,7 @@ function togglePasswordVisibility() {
         const keyResult = await homebridge.request('/validate', {
           token: devKey,
           deviceId: manualDeviceId || null,
+          enableLightSensor: lightSensorMode,
           debug: debugMode
         });
         
@@ -883,6 +1066,7 @@ function togglePasswordVisibility() {
           countryCode: countryCode,
           enableLight: enableLight,
           enableBattery: enableBattery,
+          enableLightSensor: lightSensorMode,
           debug: debugMode
         };
         
@@ -958,6 +1142,7 @@ function togglePasswordVisibility() {
         const validateResult = await homebridge.request('/validate', {
           token: manualToken,
           deviceId: hasDeviceId ? manualDeviceId : null,
+          enableLightSensor: lightSensorMode,
           debug: debugMode
         });
         
@@ -1000,6 +1185,7 @@ function togglePasswordVisibility() {
             email: email,
             password: password,
             countryCode: countryCode,
+            enableLightSensor: lightSensorMode,
             debug: debugMode
           });
           
@@ -1013,6 +1199,7 @@ function togglePasswordVisibility() {
           const validateResult2 = await homebridge.request('/validate', {
             token: finalToken,
             deviceId: hasDeviceId ? manualDeviceId : null,
+            enableLightSensor: lightSensorMode,
             debug: debugMode
           });
           
@@ -1054,6 +1241,7 @@ function togglePasswordVisibility() {
         const validateResult = await homebridge.request('/validate', {
           token: manualToken,
           deviceId: hasDeviceId ? manualDeviceId : null,
+          enableLightSensor: lightSensorMode,
           debug: debugMode
         });
         
@@ -1151,6 +1339,7 @@ function togglePasswordVisibility() {
         countryCode: countryCode,
         enableLight: enableLight,
         enableBattery: enableBattery,
+        enableLightSensor: lightSensorMode,
         debug: debugMode
       };
       
@@ -1213,47 +1402,408 @@ function togglePasswordVisibility() {
   });
   
   // Display discovered devices
-  function displayDevices(devices) {
+  // ---- per-device settings -------------------------------------------------
+  //
+  // Stored in config.json as a `devices` array, keyed on the hardware serial where
+  // the device has reported one and the device ID otherwise. The plugin resolves
+  // each field the same way: a per-device entry if there is one, the plugin-level
+  // setting if not.
+  
+  const DEVICE_FIELDS = ['enableLight', 'enableBattery', 'enableLightSensor', 'feederBatteryShows'];
+  let deviceEntries = Array.isArray(currentConfig.devices)
+    ? JSON.parse(JSON.stringify(currentConfig.devices))
+    : [];
+  let lastDiscovered = [];
+  
+  function sameKey(a, b) {
+    if (typeof a !== 'string' || typeof b !== 'string') {
+      return false;
+    }
+    
+    const normalize = value => value.toLowerCase().replace(/[^a-z0-9]/g, '');
+    
+    return !!normalize(a) && normalize(a) === normalize(b);
+  }
+  
+  function findEntry(device) {
+    return deviceEntries.find(entry =>
+      (device.serial && sameKey(entry.serial, device.serial))
+      || sameKey(entry.deviceId, device.deviceId)) || null;
+  }
+  
+  function entryFor(device) {
+    let entry = findEntry(device);
+    
+    if (!entry) {
+      entry = {};
+      deviceEntries.push(entry);
+    }
+    
+    // Rewritten every time, so an entry made before the device had ever been polled
+    // picks up the serial as soon as there is one, and a replaced device keeps its
+    // settings under the new ID.
+    entry.deviceId = device.deviceId;
+    
+    if (device.serial) {
+      entry.serial = device.serial;
+    }
+    
+    return entry;
+  }
+  
+  // Badges are computed from whether an override is stored, never by comparing
+  // against the current defaults. Otherwise changing a default in a later version
+  // silently relabels every existing device as modified.
+  function badgeFor(entry) {
+    if (entry && entry.enabled === false) {
+      return { text: 'Disabled', className: 'disabled' };
+    }
+    
+    if (entry && DEVICE_FIELDS.some(field => entry[field] !== undefined)) {
+      return { text: 'Customized settings', className: 'modified' };
+    }
+    
+    return { text: 'Default settings', className: '' };
+  }
+  
+  // An entry carrying nothing but its own keys is noise in config.json.
+  function pruneEntries() {
+    deviceEntries = deviceEntries.filter(entry =>
+      entry.enabled === false || DEVICE_FIELDS.some(field => entry[field] !== undefined));
+  }
+  
+  function escapeHtml(value) {
+    return String(value === undefined || value === null ? '' : value)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+  
+  function isFeeder(device) {
+    return /feeder/i.test(device.type || '');
+  }
+  
+  function describeType(type) {
+    if (/autodoor/i.test(type || '')) {
+      return 'Door';
+    }
+    
+    return /feeder/i.test(type || '') ? 'Feeder' : (type || 'Unknown');
+  }
+  
+  // Deliberately does not re-render. Rebuilding the list would collapse the panel
+  // the user is working in, so only the badge - the one thing a setting can change -
+  // is updated in place.
+  async function saveDeviceEntries(item, device) {
+    pruneEntries();
+    await updateConfigFromForm();
+    currentConfig.devices = JSON.parse(JSON.stringify(deviceEntries));
+    
+    if (!item || !device) {
+      return;
+    }
+    
+    const badge = badgeFor(findEntry(device) || {});
+    const element = item.querySelector('.device-badge');
+    
+    element.textContent = badge.text;
+    element.className = 'device-badge' + (badge.className ? ' ' + badge.className : '');
+  }
+  
+  // Which rows the user has open, so a re-render after rediscovery does not shut
+  // them. Keyed the same way settings are.
+  const expanded = new Set();
+  
+  function rowKey(device) {
+    return (device.serial || device.deviceId || '').toLowerCase();
+  }
+  
+  function renderDevices() {
     const deviceList = document.getElementById('deviceList');
-    const devicesSection = document.getElementById('devicesSection');
     
     deviceList.innerHTML = '';
     
-    devices.forEach((device, index) => {
-      const deviceDiv = document.createElement('div');
-      deviceDiv.className = 'device-item';
-      // Show what auto-detection sees, so "why is there no light accessory?" is
-      // answerable here rather than from the logs.
-      const light = device.lightEquipped === undefined
-        ? ''
-        : `<p><strong>Coop light:</strong> ${device.lightEquipped ? 'detected' : 'not fitted'}</p>`;
+    if (lastDiscovered.length === 0) {
+      deviceList.innerHTML = '<p style="color: #666; font-size: 13px;">No devices found on this account.</p>';
+      return;
+    }
+    
+    lastDiscovered.forEach((device) => {
+      const entry = findEntry(device) || {};
+      const badge = badgeFor(entry);
+      const disabled = entry.enabled === false;
+      const item = document.createElement('div');
       
-      let power = '';
+      item.className = 'device-item';
+      
+      // Shown inside the fold-down: what auto-detection sees, so "why is there no
+      // light accessory?" is answerable here rather than from the logs.
+      const detected = [];
+      
+      if (device.lightEquipped !== undefined) {
+        detected.push(`<strong>Coop light:</strong> ${device.lightEquipped ? 'detected' : 'not fitted'}`);
+      }
+      
       if (device.powerSource) {
         const onMains = device.powerSource.toLowerCase() === 'external';
         const level = (!onMains && device.batteryLevel !== null && device.batteryLevel !== undefined)
           ? ` (${device.batteryLevel}%)`
           : '';
-        power = `<p><strong>Power:</strong> ${onMains ? 'mains' : 'battery' + level}</p>`;
+        detected.push(`<strong>Power:</strong> ${onMains ? 'hardwired' : 'battery' + level}`);
       }
       
-      const firmware = device.firmware
-        ? `<p><strong>Firmware:</strong> ${device.firmware}</p>`
-        : '';
+      if (device.firmware) {
+        detected.push(`<strong>Firmware:</strong> ${device.firmware}`);
+      }
       
-      deviceDiv.innerHTML = `
-        <h4>${device.name}</h4>
-        <p><strong>Device ID:</strong> ${device.deviceId}</p>
-        <p><strong>Type:</strong> ${device.type}</p>
-        ${light}
-        ${power}
-        ${firmware}
-        ${index === 0 ? '<p style="color: #28a745; font-weight: 500;">✓ This device will be used</p>' : ''}
+      const light = entry.enableLight === undefined ? '' : entry.enableLight;
+      const battery = entry.enableBattery === undefined ? '' : entry.enableBattery;
+      const sensor = entry.enableLightSensor;
+      const feederShows = ['feed', 'off'].includes(entry.feederBatteryShows)
+        ? entry.feederBatteryShows
+        : 'battery';
+      
+      // A feeder has none of the door's options. It has one of its own: HomeKit
+      // shows a single battery per accessory, and a feeder reports two percentages.
+      const options = isFeeder(device) ? `
+          <div class="form-group">
+            <label>Battery shows</label>
+            <select class="form-control" data-role="feederBatteryShows">
+              <option value="battery"${feederShows === 'battery' ? ' selected' : ''}>Battery level</option>
+              <option value="feed"${feederShows === 'feed' ? ' selected' : ''}>Feed level</option>
+              <option value="off"${feederShows === 'off' ? ' selected' : ''}>Nothing</option>
+            </select>
+            <small class="form-text text-muted">
+              A feeder reports both, and Apple Home shows one battery per accessory. Showing feed level means the low-battery warning tells you to refill, and the real batteries stop warning you about anything. Nothing publishes no battery at all.
+            </small>
+          </div>
+          <div class="form-group">
+            <label>Light level sensor</label>
+            <select class="form-control" data-role="enableLightSensor">
+              <option value=""${sensor === undefined ? ' selected' : ''}>Use global setting</option>
+              <option value="true"${sensor === true ? ' selected' : ''}>Show</option>
+              <option value="false"${sensor === false ? ' selected' : ''}>Do not show</option>
+            </select>
+            <small class="form-text text-muted">
+              A feeder has its own ambient light sensor, separate from the coop light. It is what opens the feeder on daylight when its mode is set to light rather than time.
+            </small>
+          </div>
+      ` : `
+          <div class="form-group">
+            <label>Coop light accessory</label>
+            <select class="form-control" data-role="enableLight">
+              <option value=""${light === '' ? ' selected' : ''}>Use global setting</option>
+              <option value="auto"${light === 'auto' ? ' selected' : ''}>Auto-discover</option>
+              <option value="off"${light === 'off' ? ' selected' : ''}>Do not display</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Battery status</label>
+            <select class="form-control" data-role="enableBattery">
+              <option value=""${battery === '' ? ' selected' : ''}>Use global setting</option>
+              <option value="auto"${battery === 'auto' ? ' selected' : ''}>Automatic by power type</option>
+              <option value="on"${battery === 'on' ? ' selected' : ''}>Always show</option>
+              <option value="off"${battery === 'off' ? ' selected' : ''}>Always hide</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Light level sensor</label>
+            <select class="form-control" data-role="enableLightSensor">
+              <option value=""${sensor === undefined ? ' selected' : ''}>Use global setting</option>
+              <option value="true"${sensor === true ? ' selected' : ''}>Show</option>
+              <option value="false"${sensor === false ? ' selected' : ''}>Do not show</option>
+            </select>
+          </div>
+          ${device.lightEquipped ? `
+          <div class="form-group" style="margin-top: 16px; padding-top: 14px; border-top: 1px solid #dee2e6;">
+            <label>Apply Maximum Time On setting for light (minutes):</label>
+            <div style="display: flex; gap: 8px;">
+              <input type="number" class="form-control" data-role="maxOnTime" min="1" max="60" step="1"
+                style="flex: 1;" value="${device.maxOnTime === undefined ? '' : device.maxOnTime}">
+              <button type="button" class="btn btn-primary" data-role="applyMaxOnTime">Apply</button>
+            </div>
+            <div class="device-feedback" data-role="maxOnTimeFeedback"></div>
+            <small class="form-text text-muted">
+              The Omlet app only allows a light to stay on for up to 10 minutes, but it is often desirable to have the lights on for longer periods of time. Use this option to extend the maximum time on for up to 60 minutes. Please note, this pushes the setting as a one-time event. If the setting is subsequently adjusted in the Omlet app, you may return here to adjust the time again.
+            </small>
+          </div>
+          ` : ''}
       `;
-      deviceList.appendChild(deviceDiv);
+      
+      item.innerHTML = `
+        <div class="device-head" data-role="toggle">
+          <div class="device-title">
+            <h4>${escapeHtml(device.name)}</h4>
+            <p>${escapeHtml(describeType(device.type))}${device.serial ? ' &middot; ' + escapeHtml(device.serial) : ''}</p>
+          </div>
+          <span class="device-badge ${badge.className}">${badge.text}</span>
+          <span class="device-caret">&#9654;</span>
+        </div>
+        <div class="device-settings hidden">
+          ${detected.length ? `<p style="margin-bottom: 12px;">${detected.join('<br>')}</p>` : ''}
+          ${options}
+          <div class="form-group" style="margin-bottom: 0;">
+            <label>
+              <input type="checkbox" data-role="enabled"${disabled ? ' checked' : ''}> Disable this device
+            </label>
+            <div class="device-warning">
+              Remove this accessory from HomeKit entirely. If you re-enable it later it
+              arrives as a new device, so any automations using it have to be set up again.
+            </div>
+          </div>
+        </div>
+      `;
+      
+      const panel = item.querySelector('.device-settings');
+      const caret = item.querySelector('.device-caret');
+      
+      if (expanded.has(rowKey(device))) {
+        panel.classList.remove('hidden');
+        caret.innerHTML = '&#9660;';
+      }
+      
+      item.querySelector('[data-role="toggle"]').addEventListener('click', () => {
+        panel.classList.toggle('hidden');
+        
+        const open = !panel.classList.contains('hidden');
+        
+        caret.innerHTML = open ? '&#9660;' : '&#9654;';
+        
+        if (open) {
+          expanded.add(rowKey(device));
+        } else {
+          expanded.delete(rowKey(device));
+        }
+      });
+      
+      // The name is deliberately not editable. It is inherited from the Omlet app,
+      // and HomeKit owns the accessory's name once the tile exists - writing it back
+      // would not rename anything the user can see.
+      // A door has three selects and a feeder has one, so bind whichever are there.
+      ['enableLight', 'enableBattery', 'feederBatteryShows'].forEach((field) => {
+        const control = panel.querySelector(`[data-role="${field}"]`);
+        
+        if (!control) {
+          return;
+        }
+        
+        control.addEventListener('change', async (event) => {
+          const target = entryFor(device);
+          
+          // "Battery level" is the feeder default, so storing it would mark the
+          // device as customized for choosing what it already does.
+          if (event.target.value === '' || (field === 'feederBatteryShows' && event.target.value === 'battery')) {
+            delete target[field];
+          } else {
+            target[field] = event.target.value;
+          }
+          
+          await saveDeviceEntries(item, device);
+        });
+      });
+      
+      // Deliberately not a stored setting: it writes to the device once and the
+      // plugin never re-sends it, so nothing here fights the Omlet app for the
+      // value. That also means it does not count toward the Customized badge.
+      const applyButton = panel.querySelector('[data-role="applyMaxOnTime"]');
+      
+      if (applyButton) {
+        applyButton.addEventListener('click', async () => {
+          const input = panel.querySelector('[data-role="maxOnTime"]');
+          const feedback = panel.querySelector('[data-role="maxOnTimeFeedback"]');
+          const minutes = parseInt(input.value, 10);
+          
+          // Reported here rather than in the page's status bar: that sits at the
+          // top of the page, and by the time a fold-down is open it is well off
+          // screen, so a success message there is a success message nobody sees.
+          const say = (text, ok) => {
+            feedback.textContent = text;
+            feedback.className = 'device-feedback ' + (ok ? 'ok' : 'bad');
+          };
+          
+          say('', true);
+          
+          if (!Number.isInteger(minutes) || minutes < 1 || minutes > 60) {
+            say('Enter a supported value (1-60 minutes).', false);
+            return;
+          }
+          
+          applyButton.disabled = true;
+          applyButton.textContent = 'Applying...';
+          
+          try {
+            const result = await homebridge.request('/set-light-max-on-time', {
+              deviceId: device.deviceId,
+              minutes: minutes,
+              bearerToken: currentConfig.bearerToken || undefined
+            });
+            
+            // Read back from the device, so a silently clamped value shows up
+            // rather than the page claiming success at whatever was typed.
+            if (result.applied !== undefined && result.applied !== null) {
+              input.value = result.applied;
+              device.maxOnTime = result.applied;
+            }
+            
+            say(`\u2713 Applied. The light will now stay on for up to ${input.value} minutes.`, true);
+          } catch (requestError) {
+            say(requestError.message, false);
+          } finally {
+            applyButton.disabled = false;
+            applyButton.textContent = 'Apply';
+          }
+        });
+      }
+      
+      const sensorControl = panel.querySelector('[data-role="enableLightSensor"]');
+      
+      if (sensorControl) {
+        sensorControl.addEventListener('change', async (event) => {
+          const target = entryFor(device);
+          
+          if (event.target.value === '') {
+            delete target.enableLightSensor;
+          } else {
+            target.enableLightSensor = event.target.value === 'true';
+          }
+          
+          await saveDeviceEntries(item, device);
+        });
+      }
+      
+      panel.querySelector('[data-role="enabled"]').addEventListener('change', async (event) => {
+        const target = entryFor(device);
+        
+        if (event.target.checked) {
+          target.enabled = false;
+        } else {
+          delete target.enabled;
+        }
+        
+        await saveDeviceEntries(item, device);
+      });
+      
+      deviceList.appendChild(item);
     });
     
-    devicesSection.classList.remove('hidden');
+    // Devices that were configured once and are no longer on the account. The plugin
+    // removes their accessories on its own schedule; this is just so the list does
+    // not quietly lose them.
+    const absent = deviceEntries.filter(entry =>
+      !lastDiscovered.some(device =>
+        (device.serial && sameKey(entry.serial, device.serial)) || sameKey(entry.deviceId, device.deviceId)));
+    
+    if (absent.length > 0) {
+      const note = document.createElement('div');
+      
+      note.className = 'device-item device-missing';
+      note.innerHTML = `<p>${absent.length} configured device${absent.length === 1 ? '' : 's'} not currently on this account. Settings for ${absent.length === 1 ? 'it' : 'them'} are kept in case ${absent.length === 1 ? 'it comes' : 'they come'} back.</p>`;
+      deviceList.appendChild(note);
+    }
+  }
+  
+  function displayDevices(devices) {
+    lastDiscovered = Array.isArray(devices) ? devices : [];
+    renderDevices();
   }
 })();
 </script>

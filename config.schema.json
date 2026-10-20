@@ -5,7 +5,10 @@
   "customUi": true,
   "schema": {
     "type": "object",
-    "required": ["name", "countryCode"],
+    "required": [
+      "name",
+      "countryCode"
+    ],
     "properties": {
       "name": {
         "title": "Name",
@@ -28,7 +31,21 @@
         "title": "Country Code",
         "type": "string",
         "default": "US",
-        "enum": ["AU", "DE", "DK", "ES", "FR", "GB", "IE", "IT", "NL", "NO", "PL", "SE", "US"],
+        "enum": [
+          "AU",
+          "DE",
+          "DK",
+          "ES",
+          "FR",
+          "GB",
+          "IE",
+          "IT",
+          "NL",
+          "NO",
+          "PL",
+          "SE",
+          "US"
+        ],
         "description": "Your country"
       },
       "apiServer": {
@@ -41,7 +58,10 @@
         "title": "Connection Method",
         "type": "string",
         "default": "key",
-        "enum": ["key", "account"],
+        "enum": [
+          "key",
+          "account"
+        ],
         "description": "Which setup method the plugin settings page should open on. Set automatically; not used at runtime."
       },
       "bearerToken": {
@@ -50,10 +70,10 @@
         "description": "Your Omlet API key. Generate one in the developer console at smart.omlet.com/developers, or leave blank and log in with your email address and password to have one issued for you. Letters, digits, underscores and hyphens, no longer than 128 characters."
       },
       "deviceId": {
-        "title": "Device ID",
+        "title": "Device ID (no longer used)",
         "type": "string",
         "placeholder": "optional, will be auto-discovered",
-        "description": "Advanced. Not normally needed - your coop door is found automatically."
+        "description": "Left over from single-door versions. Every device on your account is published now, so this is only read to work out which door was already set up."
       },
       "pollInterval": {
         "title": "Poll Interval (seconds)",
@@ -69,23 +89,160 @@
         "description": "Enable detailed logging for troubleshooting"
       },
       "enableLight": {
-        "title": "Coop Light Accessory",
+        "title": "Coop Lights",
         "type": "string",
         "default": "auto",
         "oneOf": [
-          { "title": "Auto-discover", "enum": ["auto"] },
-          { "title": "Do not display", "enum": ["off"] }
+          {
+            "title": "Auto-discover",
+            "enum": [
+              "auto"
+            ]
+          },
+          {
+            "title": "Never display",
+            "enum": [
+              "off"
+            ]
+          }
         ]
       },
       "enableBattery": {
-        "title": "Battery Status",
+        "title": "Batteries",
         "type": "string",
         "default": "auto",
         "oneOf": [
-          { "title": "Automatic by power type", "enum": ["auto"] },
-          { "title": "Always show", "enum": ["on"] },
-          { "title": "Always hide", "enum": ["off"] }
+          {
+            "title": "Auto-discover",
+            "enum": [
+              "auto"
+            ]
+          },
+          {
+            "title": "Always display",
+            "enum": [
+              "on"
+            ]
+          },
+          {
+            "title": "Never display",
+            "enum": [
+              "off"
+            ]
+          }
         ]
+      },
+      "enableLightSensor": {
+        "title": "Light Sensors",
+        "type": "boolean",
+        "default": false,
+        "description": "Omlet light sensor reports values of 0-100. Apple Home will (incorrectly) label this as a lux reading, but it is still useful for triggering light-level automations."
+      },
+      "removeAfterHours": {
+        "title": "Remove Accessories Not Seen For (hours)",
+        "type": "integer",
+        "default": 24,
+        "minimum": 0,
+        "maximum": 720,
+        "description": "Remove a device when it has not been seen in the number of hours specified. 0 to disable. Devices will never remove due to connectivity being lost or the plugin or Homebridge server being offline. This setting allows factory reset devices to reassume their existing identity in HomeKit, preserving settings and automation."
+      },
+      "devices": {
+        "title": "Per-Device Settings",
+        "type": "array",
+        "description": "Settings for individual devices. Anything left unset uses the plugin-wide setting above.",
+        "items": {
+          "type": "object",
+          "properties": {
+            "serial": {
+              "title": "Device Serial",
+              "type": "string",
+              "description": "The device serial shown in the plugin settings. Survives a factory reset, so this is the preferred way to identify a device."
+            },
+            "deviceId": {
+              "title": "Device ID",
+              "type": "string",
+              "description": "Used only when no serial has been recorded yet."
+            },
+            "enabled": {
+              "title": "Enabled",
+              "type": "boolean",
+              "default": true,
+              "description": "Unticking this removes the accessory from HomeKit entirely. If you re-enable it later it arrives as a new device, so any automations using it have to be set up again."
+            },
+            "enableLight": {
+              "title": "Coop Light Accessory",
+              "type": "string",
+              "oneOf": [
+                {
+                  "title": "Auto-discover",
+                  "enum": [
+                    "auto"
+                  ]
+                },
+                {
+                  "title": "Do not display",
+                  "enum": [
+                    "off"
+                  ]
+                }
+              ]
+            },
+            "enableBattery": {
+              "title": "Battery Status",
+              "type": "string",
+              "oneOf": [
+                {
+                  "title": "Automatic by power type",
+                  "enum": [
+                    "auto"
+                  ]
+                },
+                {
+                  "title": "Always show",
+                  "enum": [
+                    "on"
+                  ]
+                },
+                {
+                  "title": "Always hide",
+                  "enum": [
+                    "off"
+                  ]
+                }
+              ]
+            },
+            "enableLightSensor": {
+              "title": "Light Level Sensor",
+              "type": "boolean"
+            },
+            "feederBatteryShows": {
+              "title": "Feeder Battery Shows",
+              "type": "string",
+              "default": "battery",
+              "oneOf": [
+                {
+                  "title": "Battery level",
+                  "enum": [
+                    "battery"
+                  ]
+                },
+                {
+                  "title": "Feed level",
+                  "enum": [
+                    "feed"
+                  ]
+                },
+                {
+                  "title": "Nothing",
+                  "enum": [
+                    "off"
+                  ]
+                }
+              ],
+              "description": "Feeders only. A feeder reports both a battery level and a feed level, and HomeKit shows one battery per accessory. Showing feed level means the low-battery warning tells you to refill, and the real batteries no longer warn you about anything. \"Nothing\" publishes no battery at all."
+            }
+          }
+        }
       }
     }
   },
@@ -95,6 +252,9 @@
     "email",
     "password",
     "countryCode",
+    "enableLight",
+    "enableBattery",
+    "enableLightSensor",
     {
       "type": "fieldset",
       "title": "Advanced Settings",
@@ -102,11 +262,25 @@
       "expanded": false,
       "items": [
         "apiServer",
-        "deviceId",
         "pollInterval",
-        "enableLight",
-        "enableBattery",
+        "removeAfterHours",
         "debug"
+      ]
+    },
+    {
+      "key": "devices",
+      "type": "array",
+      "title": "Per-Device Settings",
+      "expandable": true,
+      "expanded": false,
+      "items": [
+        "devices[].serial",
+        "devices[].deviceId",
+        "devices[].enabled",
+        "devices[].enableLight",
+        "devices[].enableBattery",
+        "devices[].enableLightSensor",
+        "devices[].feederBatteryShows"
       ]
     }
   ]

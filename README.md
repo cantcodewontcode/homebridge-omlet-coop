@@ -8,6 +8,8 @@ This Homebridge plugin allows you to control your Omlet coop door and coop light
 
 - **Easy Setup**: Custom configuration interface with automatic login and device discovery
 - **Coop Door Control**: Open, close, and monitor your Omlet door (as a garage door) in HomeKit
+- **Multiple Doors**: Every coop door on your account, each with its own settings
+- **Smart Feeders**: Open/closed status as a contact sensor, read-only
 - **Light Control**: Turn your coop light on and off (optional, requires Omlet Coop Light module)
 - **Real-time Status**: Automatic polling to keep door and light status up to date
 - **HomeKit Integration**: Full integration with Apple HomeKit scenes and automations
@@ -59,13 +61,49 @@ This is the simplest setup option, and does not require the manual generation of
 
 Logging in generates an Omlet API key, which is saved to the Homebridge storage directory rather than `config.json`. Your coop and accessories are auto-discovered. This method impersonates the login process used by the official Omlet mobile app, so the key it generates is not visible in the Omlet Developer console and cannot be revoked.
 
+### Global Settings
+
+Applied to every device, unless a device overrides them:
+
+- **Coop lights**: Auto-discover, or never display
+- **Batteries**: Auto-discover, always display, or never display
+- **Light sensors**: Off by default. See below before turning it on
+
+### Per-Device Settings
+
+Each device has its own section in the plugin settings where any of the above can be
+overridden, the device can be hidden from HomeKit, and — for a door with a coop light
+— the **maximum light on time** can be set.
+
+The Omlet app only allows a light to stay on for up to 10 minutes. This extends it to
+as much as 60 minutes. It is pushed to the device as a one-time event —
+if the setting is subsequently adjusted in the Omlet app, return here and set it
+again.
+
 ### Advanced Settings
 
 Rarely needed:
 
 - **API Server**: Override the default API server hostname (if ever needed)
-- **Poll Interval**: Reduce how often the plugin checks device status (minimum: 30 seconds)
+- **Poll Interval**: Reduce how often the plugin checks device status (minimum: 30 seconds). One request covers every device on your account, so this does not change with the number of doors
+- **Remove accessories not seen for**: How long a device may be missing from your Omlet account before its accessory is removed from HomeKit. Default 24 hours; 0 never removes one
 - **Debug Mode**: Enable detailed logging for troubleshooting
+- **Capture device payload**: Fetches one response from Omlet and shows it ready to paste into a bug report. Serials, device names, email addresses and your wifi name are replaced with placeholders unless you ask for them. Nothing is written to the log
+
+### Re-authenticate and Reset Plugin
+
+Once you are connected, the settings page offers two buttons.
+
+**Re-authenticate** signs you in again and keeps everything else. This is the one for
+an expired key or a password change.
+
+**Reset Plugin** clears your credentials and every setting, including per-device
+ones, so you can start clean without uninstalling and reinstalling the plugin. Your
+accessories are removed from HomeKit. The button asks you to click it twice.
+
+#### Light Level Sensor
+
+Omlet light sensor reports values of 0-100. Apple Home will (incorrectly) label this as a lux reading, but it is still useful for triggering light-level automations.
 
 ### Where credentials are kept
 
@@ -112,12 +150,41 @@ Set `enableLight` to `false` if you do not have the Omlet Coop Light module inst
 
 ### Multiple Devices
 
-Your coop door is found automatically — there is nothing to configure.
+Your coop doors are found automatically — there is nothing to configure. Every door on
+your Omlet account is published to HomeKit, named as it is named in the Omlet app.
 
-If you have more than one door on your account, the plugin uses the first one it
-finds and lists the others in the Homebridge log at startup. If that is not the door
-you want, please [open an issue](https://github.com/cantcodewontcode/homebridge-omlet-coop/issues)
-and say so.
+Each door has its own section in the plugin settings, where you can set its coop light
+accessory, battery status and light level sensor, or switch the door off entirely.
+Anything you leave alone follows the plugin-wide setting above it.
+
+Disabling a door removes it from HomeKit. Its room, its name and any automations using
+it go with it, and turning it back on creates a new tile with none of them back.
+
+If you are upgrading from an earlier version and have more than one door, only the
+door that was already set up is published. The others are listed as disabled, and the
+Homebridge log says so at startup — enable the ones you want in the plugin settings.
+
+### Feeders
+
+Omlet Smart Feeders on your account appear in HomeKit as a contact sensor, showing
+whether the feeder is open or closed and reporting any fault.
+
+They are read-only. The Omlet app opens and closes a feeder on a schedule or a light
+threshold and offers no way to open one on demand, so the plugin does not offer one
+either.
+
+A feeder reports two percentages — its battery level and its feed level — and Apple
+Home shows one battery per accessory. The battery shows the real battery level by
+default. A per-device setting switches it to feed level, which turns the low-battery
+warning into a "time to refill" alert, at the cost of the real batteries no longer
+warning you about anything.
+
+A feeder also has its own ambient light sensor, separate from the coop light — it is
+what opens the feeder on daylight when its mode is set to light rather than time. It
+can be exposed the same way a door's is, globally or per-feeder.
+
+A feeder checks in with Omlet about once an hour, so its state updates far less often
+than a door's.
 
 ## Usage
 

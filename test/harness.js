@@ -256,6 +256,10 @@ class FakeCharacteristic {
   onGet(fn) { this.getter = fn; return this; }
   onSet(fn) { this.setter = fn; return this; }
   updateValue(value) { this.value = value; return this; }
+  // Real HAP has both. The plugin uses setValue for fixed characteristics like
+  // ChargingState; nothing reached it until feeders, because a mains-powered door
+  // never builds a battery service.
+  setValue(value) { this.value = value; return this; }
   setProps() { return this; }
   async read() { return this.getter ? this.getter() : this.value; }
   async write(value) { if (this.setter) { await this.setter(value); } this.value = value; }
@@ -301,7 +305,9 @@ const hap = {
     AccessoryInformation: serviceClass('AccessoryInformation'),
     GarageDoorOpener: serviceClass('GarageDoorOpener'),
     Lightbulb: serviceClass('Lightbulb'),
-    Battery: serviceClass('Battery')
+    Battery: serviceClass('Battery'),
+    LightSensor: serviceClass('LightSensor'),
+    ContactSensor: serviceClass('ContactSensor')
   },
   Characteristic: {
     Name: characteristicClass('Name'),
@@ -316,7 +322,11 @@ const hap = {
     On: characteristicClass('On'),
     BatteryLevel: characteristicClass('BatteryLevel'),
     StatusLowBattery: characteristicClass('StatusLowBattery'),
-    ChargingState: characteristicClass('ChargingState', { NOT_CHARGEABLE: 2 })
+    ChargingState: characteristicClass('ChargingState', { NOT_CHARGEABLE: 2 }),
+    CurrentAmbientLightLevel: characteristicClass('CurrentAmbientLightLevel'),
+    ContactSensorState: characteristicClass('ContactSensorState',
+      { CONTACT_DETECTED: 0, CONTACT_NOT_DETECTED: 1 }),
+    StatusFault: characteristicClass('StatusFault', { NO_FAULT: 0, GENERAL_FAULT: 1 })
   },
   HAPStatus: { SERVICE_COMMUNICATION_FAILURE: -70402 },
   HapStatusError: class HapStatusError extends Error {
@@ -410,6 +420,11 @@ function loadPlatformClass(fakes) {
 
 // ---------- one call to build a world
 
+// Log assertions take a substring or a regular expression.
+function matches(message, fragment) {
+  return fragment instanceof RegExp ? fragment.test(message) : message.includes(fragment);
+}
+
 function setup(options = {}) {
   const clock = makeClock();
   const cloud = makeCloud();
@@ -432,13 +447,36 @@ function setup(options = {}) {
 
   return {
     platform, api, cloud, clock, fs: fsFake, logs, config,
-    said: (fragment) => logs.filter(l => l.message.includes(fragment)),
-    saidOnce: (fragment) => logs.filter(l => l.message.includes(fragment)).length === 1,
+    said: (fragment) => logs.filter(l => matches(l.message, fragment)),
+    saidOnce: (fragment) => logs.filter(l => matches(l.message, fragment)).length === 1,
     lines: () => logs.map(l => `${l.level}  ${l.message}`),
     // startPolling() schedules the first poll on a 0ms timer, so the clock has to
     // turn once for a freshly started platform to have talked to the cloud at all.
     start: async () => { await api.fire('didFinishLaunching'); await clock.advance(0); },
-    accessory: () => api.registered[0] || platform.accessories[0],
+    // An accessory Homebridge hands back from the cache before didFinishLaunching.
+    // No serial unless one is given: that is what an accessory created before 0.9.10
+    // looks like, and several rules turn on the difference.
+    cache: (deviceId, displayName, serial) => {
+      const accessory = new FakeAccessory(displayName, hap.uuid.generate('omlet-coop-' + deviceId));
+      accessory.context.deviceId = deviceId;
+      
+      if (serial) {
+        accessory.context.deviceSerial = serial;
+      }
+      
+      platform.configureAccessory(accessory);
+      
+      return accessory;
+    },
+    // platform.accessories is the live list - api.registered is an append-only log of
+    // registrations and never shrinks, so it counts accessories that have been removed.
+    accessory: () => platform.accessories[0] || api.registered[0],
+    accessories: () => platform.accessories,
+    // One /group call serves every device, so "did we poll" is account-wide.
+    polls: () => cloud.requests.filter(r => (r.path || '') === '/api/v1/group').length,
+    // Commands still go to the device endpoint, so this is how you assert one
+    // reached the right door.
+    sentTo: (deviceId) => cloud.requests.filter(r => (r.path || '').includes('/device/' + deviceId)),
     restore: () => {
       global.setTimeout = realTimers.setTimeout;
       global.clearTimeout = realTimers.clearTimeout;
