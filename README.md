@@ -76,7 +76,7 @@ overridden, the device can be hidden from HomeKit, and — for a door with a coo
 — the **maximum light on time** can be set.
 
 The Omlet app only allows a light to stay on for up to 10 minutes. This extends it to
-as much as 1440 minutes (24 hours). It is pushed to the device as a one-time event —
+as much as 60 minutes. It is pushed to the device as a one-time event —
 if the setting is subsequently adjusted in the Omlet app, return here and set it
 again.
 

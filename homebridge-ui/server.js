@@ -100,8 +100,8 @@ class OmletPluginUiServer extends HomebridgePluginUiServer {
       throw new RequestError('A device is required', { status: 400 });
     }
     
-    if (!Number.isInteger(value) || value < 1 || value > 1440) {
-      throw new RequestError('Enter a supported value (1-1440 minutes).', { status: 400 });
+    if (!Number.isInteger(value) || value < 1 || value > 60) {
+      throw new RequestError('Enter a supported value (1-60 minutes).', { status: 400 });
     }
     
     const stored = this.readStoredCredentials();
