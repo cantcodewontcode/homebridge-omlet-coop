@@ -2,42 +2,51 @@
 
 ## [1.0.0] - 2026-10-20
 
-### Door Updates
+**1.0 is here!** The new version brings several new features. Some of the highlights are:
+
+## Feature Highlights
+* **Multi-Door Support.** The app now detects and adds all doors in your Omlet account.
+* **Extended light timers.** The Omlet app turns the coop light off after 1-10 minutes. This plugin allows you to extend the light timer to 60 minutes.
+* **Feeder Support.** Added support for Omlet Smart Feeders. Feeders appear as contact sensors, allowing you to see when they are open or closed. Monitor battery state (or optionally override the battery state so that it displays feed level instead).
+* **Security and hygiene updates.** Several small changes to security hardening and overall user experience.
+
+As always please report any bugs to [the issue tracker](https://github.com/cantcodewontcode/homebridge-omlet-coop/issues), and use **Capture device payload** in your plugin's advanced settings to attach a copy of your account's API payload for troubleshooting.
+
+## Full Update List
+
+### Coop doors
 - Added support for multiple Omlet coop doors. Adjust light, battery, and light level settings globally or per-door. (Requested by @stevendark-TSD, #6)
-- Devices now match based on their serial, allowing device matching after a factory reset.
-- Disable a door to hide it from HomeKit. (If a device is disabled and then enabled, it appears as a new device in Apple Home.)
-- **On upgrade from a prior version**, only the existing coop door will show in Apple Home. If you have additional coop doors, simply enable them in plugin settings. (On new installations, all doors add to Apple Home by default.)
-- A door added to your account appears on the next poll, without needing a plugin restart.
-- Optionally expose the door's light sensor. This will show in Apple Home as a lux value, but it is actually an Omlet-proprietary value of 0-100. Useful for triggering light-based automations.
+- **When upgrading to this version**, if you have multiple doors they will populate into the plugin as disabled. Simply enable them in plugin settings. (This is only applicable if you already have multiple doors present when you are upgrading. New installs all doors add by default, and doors added in the future appear by default.)
+- Disable a door to hide it from HomeKit.
+- Newly added doors auto-add on next poll (default 30 seconds), no plugin restart needed.
+- Optionally expose the door's light sensor. (This shows in Apple Home as a lux value, but it is actually an Omlet-proprietary value of 0-100.)
+- Extend the coop light's maximum on time up to 60 minutes, past the 10 the Omlet app allows. This is pushed to the door as a one-time event, so if the setting is later adjusted in the Omlet app you can return and set it again.
 
 ### Feeders
 - Added support for Omlet Smart Feeders! (Requested by @stevendark-TSD, #6)
-- Feeders appear as contact sensors, which can be customized in Apple Home to appear as a sensor, door, or other device type. Monitor when feeders are open or closed, along with any faults.
-- Feeders are read-only. The Omlet app controls them on a schedule and does not provide an "open" or "close" command on-demand.
-- By default, feeders report battery level and this will display as the contact sensor's battery level.
-- For users who prefer, feed level can be reported as the feeder accessory battery level (instead of showing the actual battery level). Choose between mapping feed level or battery level to the Apple Home accessory battery level.
-- Feeders have their own ambient light sensor, separate from the coop light, and it can be exposed the same way a door's is — globally or per-feeder. This is the sensor that opens the feeder on daylight when its mode is set to light rather than time.
-- A feeder checks in with Omlet only periodically, so its state is not live in the same way a door's state is live. It is possible for state reporting to be delayed.
+- Feeders appear as contact sensors. Monitor when feeders are open or closed, along with any faults. (Feeders are read only, and controlled by a schedule set in the Omlet app.)
+- Monitor feeder battery level in Home app. Or if you prefer, you can instead have the Home app battery level show the feed level of the feeder, or hide it altogether.
+- Optionally expose the feeder's light sensor. (This shows in Home app as a lux value, but it is actually an Omlet-proprietary value of 0-100.)
+- **Please note:** feeders wake-up periodically throughout the day to check in with the Omlet server, and spend most of the day sleeping to preserve battery life. Do not expect their state reporting to be real-time in the same way the door is.
 
-### Security
+### Security hardening
 - Debug mode no longer logs account passwords on initial plugin setup.
 - Debug mode no longer logs any part of your API key.
 - Debug mode no longer prints the full device payload when visiting plugin settings.
 
 ### Settings
-- Coop lights, batteries and light sensors have moved out of advanced settings into a **Global Settings** section above the device list, since they decide what each device publishes. Advanced settings now holds only API server, poll interval, accessory removal, debug logging and payload capture.
-- Per-device dropdowns now read "Use global setting" rather than "Use the plugin setting".
-- Added a maximum light on time setting to each door with a coop light. The Omlet app only allows up to 10 minutes; this extends it to as much as 60 minutes. It is pushed to the device as a one-time event, so if the setting is later adjusted in the Omlet app you can return and set it again.
-- The settings page now lists every device on the account, with its type and serial.
-- A new **Re-authenticate** button allows users to force a fresh re-authentication while preserving all plugin config.
-- A new **Reset Plugin** button allows users to wipe all plugin configuration without requiring the plugin to be deleted and reinstalled.
-- A new **Capture device payload** button in advanced settings captures a single full payload response from Omlet API, and displays it for easy copy/paste. This is useful for troubleshooting issues with the plugin. The function automatically removes sensitive information like device name and wi-fi name.
-- The system now automatically removes accessories not seen for 24 hours. The number of hours can be adjusted or set to 0 to disable. This allows devices to automatically be dropped after they are removed from your setup, and also allows devices which are factory reset to be preserved in Apple Home with their existing settings.
+- The plugin settings now lists every device in your Omlet account, with its type and serial.
+- Coop lights, batteries and light sensors have moved into a **Global Settings** section above the device list, and each device can override them. Advanced settings now holds only the API server, poll interval, accessory removal, debug logging and payload capture.
+- Added a **Re-authenticate** button to force a fresh re-login to your Omlet account, while preserving all plugin configuration.
+- A new **Reset Plugin** button wipes all plugin configuration. Users no longer need to delete the plugin and re-install it to wipe the plugin.
+- A new **Capture device payload** button in advanced settings captures a single full payload response from Omlet API. This is useful for troubleshooting the plugin, and may be requested if you open a GitHub issue. The function automatically masks sensitive details from your payload.
 - Removed the Device ID field from settings, given that all accessories are now discovered.
 
 ### Reliability
 - One request covers every device on the account, reducing the impact on Omlet's servers.
+- Improved device matching using serial number, allows device to be identified even after a factory reset of a device.
 - Initial startup and discovery now use a single API call.
+- Accessories are auto-removed if not seen for 24 hours by default. The value can be adjusted or disabled if desired. (Please note, this only removes devices when the overall Omlet connection is working, but your device has disappeared. An offline Homebridge server or Omlet server outage will not result in removals!)
 
 ### Bug Fixes
 - A coop that cannot be found on the account is now reported once rather than on every poll.
